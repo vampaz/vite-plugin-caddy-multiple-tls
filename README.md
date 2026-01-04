@@ -43,7 +43,7 @@ import caddyTls from 'vite-plugin-multiple-caddy';
 const config = defineConfig({
   plugins: [
     caddyTls({
-      baseDomain: 'local.conekto.eu',
+      baseDomain: 'localhost',
       internalTls: true,
     })
   ]
