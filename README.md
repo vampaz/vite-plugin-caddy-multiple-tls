@@ -1,7 +1,5 @@
 # vite-plugin-multiple-caddy
 
-> [!WARNING]
-> THIS PLUGIN IS HIGHLY EXPERIMENTAL AND UNSTABLE, USE WITH CAUTION
 
 ## Usage
 
