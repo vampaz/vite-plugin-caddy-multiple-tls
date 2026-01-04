@@ -8,11 +8,7 @@ const config = defineConfig({
     allowedHosts: true,
   },
   plugins: [
-    caddyTls({
-      // domains: ['local.conekto.eu', 'local.notesauditor.ai'],
-      baseDomain: 'localhost',
-      // internalTls: true,
-    }),
+    caddyTls(),
   ],
 });
 

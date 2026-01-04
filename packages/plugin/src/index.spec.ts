@@ -70,7 +70,11 @@ describe('viteCaddyTlsPlugin', () => {
 
   it('uses the bound port after the server starts listening', async () => {
     const httpServer = createHttpServer(4321);
-    const plugin = viteCaddyTlsPlugin({ domains: ['app.localhost'] });
+    const plugin = viteCaddyTlsPlugin({
+      baseDomain: 'localhost',
+      repo: 'app',
+      branch: 'main',
+    });
 
     (plugin.configureServer as (ctx: any) => void)({
       httpServer,
@@ -92,7 +96,9 @@ describe('viteCaddyTlsPlugin', () => {
   it('cleans up the route on SIGTERM', async () => {
     const httpServer = createHttpServer(5001);
     const plugin = viteCaddyTlsPlugin({
-      domains: ['cleanup.localhost'],
+      baseDomain: 'localhost',
+      repo: 'cleanup',
+      branch: 'main',
       internalTls: true,
     });
     const killSpy = vi
@@ -119,11 +125,12 @@ describe('viteCaddyTlsPlugin', () => {
     expect(killSpy).toHaveBeenCalledWith(process.pid, 'SIGTERM');
   });
 
-  it('adds a TLS policy when internal TLS is enabled', async () => {
+  it('adds a TLS policy when baseDomain is provided', async () => {
     const httpServer = createHttpServer(4322);
     const plugin = viteCaddyTlsPlugin({
-      domains: ['secure.local'],
-      internalTls: true,
+      baseDomain: 'local.conekto.eu',
+      repo: 'secure',
+      branch: 'main',
     });
 
     (plugin.configureServer as (ctx: any) => void)({
@@ -137,14 +144,14 @@ describe('viteCaddyTlsPlugin', () => {
     await flushPromises();
 
     expect(addTlsPolicy).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(addTlsPolicy).mock.calls[0][1]).toEqual(['secure.local']);
+    expect(vi.mocked(addTlsPolicy).mock.calls[0][1]).toEqual([
+      'secure.main.local.conekto.eu',
+    ]);
   });
 
-  it('derives domains from git when baseDomain is set', async () => {
+  it('defaults baseDomain to localhost', async () => {
     const httpServer = createHttpServer(4000);
-    const plugin = viteCaddyTlsPlugin({
-      baseDomain: 'local.conekto.eu',
-    });
+    const plugin = viteCaddyTlsPlugin();
 
     (plugin.configureServer as (ctx: any) => void)({
       httpServer,
@@ -158,6 +165,6 @@ describe('viteCaddyTlsPlugin', () => {
 
     expect(addRoute).toHaveBeenCalledTimes(1);
     const domains = vi.mocked(addRoute).mock.calls[0][1];
-    expect(domains).toEqual(['my-repo.feature-test.local.conekto.eu']);
+    expect(domains).toEqual(['my-repo.feature-test.localhost']);
   });
 });
