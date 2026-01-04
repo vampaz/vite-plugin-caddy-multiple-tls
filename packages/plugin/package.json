@@ -1,0 +1,51 @@
+{
+  "name": "vite-plugin-multiple-caddy",
+  "version": "0.0.1",
+  "license": "MIT",
+  "author": "vampaz",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "dev": "tsup --watch src/**/* src/index.ts --format esm --dts-resolve",
+    "build": "tsup src/index.ts --format esm --dts",
+    "build:docs": "typedoc --out docs src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vampaz/vite-plugin-multiple-caddy.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vampaz/vite-plugin-multiple-caddy/issues"
+  },
+  "homepage": "https://github.com/vampaz/vite-plugin-multiple-caddy/#readme",
+  "peerDependencies": {
+    "vite": "^3.0.0 || ^4.0.0 || ^5.0.0 || ^6.0.0 || ^7.0.0"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^9.0.13",
+    "@types/node": "^20.11.16",
+    "fs-extra": "^10.1.0",
+    "tsup": "^8.0.1",
+    "typedoc": "^0.25.13",
+    "vite": "^7.0.0",
+    "vitest": "^2.1.0"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0"
+  }
+}

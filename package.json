@@ -1,0 +1,37 @@
+{
+  "name": "vite-plugin-multiple-caddy-root",
+  "version": "0.0.1",
+  "license": "MIT",
+  "author": "vampaz",
+  "type": "module",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "playground"
+  ],
+  "scripts": {
+    "start": "npm run start --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "build:docs": "npm run build:docs --workspace packages/plugin",
+    "format": "biome format --write .",
+    "lint": "biome lint .",
+    "check": "biome check .",
+    "check:fix": "biome check . --write"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vampaz/vite-plugin-multiple-caddy.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vampaz/vite-plugin-multiple-caddy/issues"
+  },
+  "homepage": "https://github.com/vampaz/vite-plugin-multiple-caddy/#readme",
+  "devDependencies": {
+    "biome": "^0.3.3",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.0"
+  }
+}
