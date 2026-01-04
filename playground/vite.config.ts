@@ -5,10 +5,14 @@ const config = defineConfig({
   server: {
     port: 3000,
     host: true,
-    allowedHosts: true,
+    // allowedHosts: true,
   },
   plugins: [
-    caddyTls(),
+    caddyTls(
+      // {
+      //   baseDomain: 'mine.fu',
+      // }
+    ),
   ],
 });
 

@@ -14,6 +14,8 @@ import {
 } from './utils.js';
 
 export interface ViteCaddyTlsPluginOptions {
+  /** Explicit domain to proxy without repo/branch derivation */
+  domain?: string;
   /** Base domain to build <repo>.<branch>.<baseDomain> (defaults to localhost) */
   baseDomain?: string;
   /** Override repo name used in derived domains */
@@ -23,7 +25,7 @@ export interface ViteCaddyTlsPluginOptions {
   cors?: string;
   /** Override the default Caddy server name (srv0) */
   serverName?: string;
-  /** Use Caddy's internal CA for the provided domains (defaults to true when baseDomain is set) */
+  /** Use Caddy's internal CA for the provided domains (defaults to true when baseDomain or domain is set) */
   internalTls?: boolean;
 }
 
@@ -100,6 +102,20 @@ function buildDerivedDomain(options: ViteCaddyTlsPluginOptions) {
   return `${repoLabel}.${branchLabel}.${baseDomain}`;
 }
 
+function normalizeDomain(domain: string) {
+  const trimmed = domain.trim().toLowerCase();
+  if (!trimmed) return null;
+  return trimmed;
+}
+
+function resolveDomain(options: ViteCaddyTlsPluginOptions) {
+  if (options.domain) {
+    return normalizeDomain(options.domain);
+  }
+
+  return buildDerivedDomain(options);
+}
+
 /**
  * Vite plugin to run Caddy server to proxy traffic on https for local development
  *
@@ -107,13 +123,14 @@ function buildDerivedDomain(options: ViteCaddyTlsPluginOptions) {
  * @example
  * ```
  * caddyTls({
- *   baseDomain: "localhost",
+ *   domain: "app.localhost",
  * })
  * ```
  * @returns {Plugin} - a Vite plugin
  */
 export default function viteCaddyTlsPlugin(
   {
+    domain,
     baseDomain,
     repo,
     branch,
@@ -126,17 +143,18 @@ export default function viteCaddyTlsPlugin(
     name: 'vite:caddy-tls',
     configureServer({ httpServer, config }) {
       const fallbackPort = config.server.port || 5173;
-      const derivedDomain = buildDerivedDomain({ baseDomain, repo, branch });
-      const domainArray = derivedDomain ? [derivedDomain] : [];
+      const resolvedDomain = resolveDomain({ domain, baseDomain, repo, branch });
+      const domainArray = resolvedDomain ? [resolvedDomain] : [];
       const routeId = `vite-proxy-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-      const shouldUseInternalTls = internalTls ?? baseDomain !== undefined;
+      const shouldUseInternalTls =
+        internalTls ?? (baseDomain !== undefined || domain !== undefined);
       const tlsPolicyId = shouldUseInternalTls ? `${routeId}-tls` : null;
       let cleanupStarted = false;
 
       if (domainArray.length === 0) {
         console.error(
           chalk.red(
-            'No domain resolved. Run inside a git repo or pass repo/branch.',
+            'No domain resolved. Provide domain, or run inside a git repo, or pass repo/branch.',
           ),
         );
         return;

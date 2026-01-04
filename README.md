@@ -10,16 +10,12 @@ import caddyTls from 'vite-plugin-multiple-caddy';
 
 const config = defineConfig({
   plugins: [
-    caddyTls({
-      baseDomain: 'localhost',
-    })
+    caddyTls(),
   ]
 });
 
 export default config;
 ```
-
-You can also call `caddyTls()` with no options to use the default `localhost` base domain.
 
 Will give this in the terminal, allow you to connect to your app on HTTPS with a self-signed and trusted cert.
 ```
@@ -31,6 +27,26 @@ Will give this in the terminal, allow you to connect to your app on HTTPS with a
 🔗 Access your local server 
 🌍 https://my-repo.my-branch.localhost
 
+```
+
+By default, the plugin derives `<repo>.<branch>.localhost` from git.
+
+If you want a fixed host without repo/branch in the URL, pass a single domain:
+
+```js
+// vite.config.js
+import { defineConfig } from 'vite';
+import caddyTls from 'vite-plugin-multiple-caddy';
+
+const config = defineConfig({
+  plugins: [
+    caddyTls({
+      domain: 'app.localhost',
+    })
+  ]
+});
+
+export default config;
 ```
 
 To derive a domain like `<repo>.<branch>.<baseDomain>` automatically from git (repo name first, then branch):
@@ -55,7 +71,7 @@ You can override auto-detection with `repo` or `branch` if needed.
 
 For a zero-config experience, use `baseDomain: 'localhost'` (the default) so the derived domain works without editing `/etc/hosts`.
 
-`internalTls` defaults to `true` when you pass `baseDomain`. You can override it if needed.
+`internalTls` defaults to `true` when you pass `baseDomain` or `domain`. You can override it if needed.
 
 For non-`.localhost` domains (like `local.example.test`), keep `internalTls: true` to force Caddy to use its internal CA for certificates.
 

@@ -71,9 +71,7 @@ describe('viteCaddyTlsPlugin', () => {
   it('uses the bound port after the server starts listening', async () => {
     const httpServer = createHttpServer(4321);
     const plugin = viteCaddyTlsPlugin({
-      baseDomain: 'localhost',
-      repo: 'app',
-      branch: 'main',
+      domain: 'app.localhost',
     });
 
     (plugin.configureServer as (ctx: any) => void)({
@@ -147,6 +145,27 @@ describe('viteCaddyTlsPlugin', () => {
     expect(vi.mocked(addTlsPolicy).mock.calls[0][1]).toEqual([
       'secure.main.local.conekto.eu',
     ]);
+  });
+
+  it('uses an explicit domain when provided', async () => {
+    const httpServer = createHttpServer(4010);
+    const plugin = viteCaddyTlsPlugin({
+      domain: 'explicit.localhost',
+    });
+
+    (plugin.configureServer as (ctx: any) => void)({
+      httpServer,
+      config: { server: { port: 5173 } },
+    });
+
+    httpServer.listening = true;
+    httpServer.emit('listening');
+    await flushPromises();
+    await flushPromises();
+
+    expect(addRoute).toHaveBeenCalledTimes(1);
+    const domains = vi.mocked(addRoute).mock.calls[0][1];
+    expect(domains).toEqual(['explicit.localhost']);
   });
 
   it('defaults baseDomain to localhost', async () => {
