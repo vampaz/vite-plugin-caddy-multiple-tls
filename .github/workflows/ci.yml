@@ -40,6 +40,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y caddy
+          sudo systemctl stop caddy
           sudo setcap cap_net_bind_service=+ep "$(which caddy)"
 
       - name: Install e2e deps
@@ -56,23 +57,6 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
         working-directory: tests/e2e
-
-      - name: Start playground and verify
-        run: |
-          npm run dev --workspace playground &
-          sleep 5
-          echo "Checking Caddy admin API..."
-          curl -s http://localhost:2019/config/ | head -c 500
-          echo ""
-          echo "Checking /etc/hosts..."
-          cat /etc/hosts | grep localhost
-          echo ""
-          echo "Trying to reach the URL..."
-          curl -sk --max-time 10 ${{ steps.e2e-url.outputs.url }} || echo "Failed to reach URL"
-          echo ""
-          echo "Checking Caddy config..."
-          curl -s http://localhost:2019/config/apps/http/servers/ | head -c 1000
-          kill %1 || true
 
       - name: Run e2e tests
         run: npm test
