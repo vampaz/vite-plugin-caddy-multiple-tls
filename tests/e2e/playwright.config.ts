@@ -99,6 +99,8 @@ export default defineConfig({
     url: resolveBaseUrl(),
     reuseExistingServer: true,
     ignoreHTTPSErrors: true,
+    stdout: 'pipe',
+    stderr: 'pipe',
   },
   projects: [
     {
