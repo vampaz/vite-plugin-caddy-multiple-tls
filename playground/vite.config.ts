@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import caddyTls from '../packages/plugin/src/index.js';
+import { playgroundBaseDomain } from './base-domain.js';
 
 const config = defineConfig({
   server: {
@@ -10,7 +11,7 @@ const config = defineConfig({
   plugins: [
     caddyTls(
       {
-        baseDomain: 'mine.localhost',
+        baseDomain: playgroundBaseDomain,
       }
     ),
   ],
