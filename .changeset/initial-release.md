@@ -1,5 +1,5 @@
 ---
-'vite-plugin-multiple-caddy': major
+'vite-plugin-caddy-multiple-tls': major
 ---
 
 Initial release.

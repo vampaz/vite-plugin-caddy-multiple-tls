@@ -1,5 +1,5 @@
 {
-  "name": "vite-plugin-multiple-caddy-root",
+  "name": "vite-plugin-caddy-multiple-tls-root",
   "version": "0.0.1",
   "license": "MIT",
   "author": "vampaz",
@@ -25,12 +25,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/vampaz/vite-plugin-multiple-caddy.git"
+    "url": "git+https://github.com/vampaz/vite-plugin-caddy-multiple-tls.git"
   },
   "bugs": {
-    "url": "https://github.com/vampaz/vite-plugin-multiple-caddy/issues"
+    "url": "https://github.com/vampaz/vite-plugin-caddy-multiple-tls/issues"
   },
-  "homepage": "https://github.com/vampaz/vite-plugin-multiple-caddy/#readme",
+  "homepage": "https://github.com/vampaz/vite-plugin-caddy-multiple-tls/#readme",
   "devDependencies": {
     "@changesets/cli": "^2.29.8",
     "biome": "^0.3.3",

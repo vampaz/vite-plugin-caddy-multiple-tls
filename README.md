@@ -1,11 +1,11 @@
-# vite-plugin-multiple-caddy
+# vite-plugin-caddy-multiple-tls
 
 ## Usage
 
 ```js
 // vite.config.js
 import { defineConfig } from 'vite';
-import caddyTls from 'vite-plugin-multiple-caddy';
+import caddyTls from 'vite-plugin-caddy-multiple-tls';
 
 const config = defineConfig({
   plugins: [
@@ -36,7 +36,7 @@ If you want a fixed host without repo/branch in the URL, pass a single domain:
 ```js
 // vite.config.js
 import { defineConfig } from 'vite';
-import caddyTls from 'vite-plugin-multiple-caddy';
+import caddyTls from 'vite-plugin-caddy-multiple-tls';
 
 const config = defineConfig({
   plugins: [
@@ -54,7 +54,7 @@ To derive a domain like `<repo>.<branch>.<baseDomain>` automatically from git (r
 ```js
 // vite.config.js
 import { defineConfig } from 'vite';
-import caddyTls from 'vite-plugin-multiple-caddy';
+import caddyTls from 'vite-plugin-caddy-multiple-tls';
 
 const config = defineConfig({
   plugins: [

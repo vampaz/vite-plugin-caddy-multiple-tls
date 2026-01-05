@@ -1,6 +1,6 @@
 # Architecture: Shared Caddy Proxy for Multiple Vite Instances
 
-This document outlines the architecture of `vite-plugin-multiple-caddy`, designed to allow multiple Vite development servers to run simultaneously using custom local domains and HTTPS, sharing a single Caddy reverse proxy instance.
+This document outlines the architecture of `vite-plugin-caddy-multiple-tls`, designed to allow multiple Vite development servers to run simultaneously using custom local domains and HTTPS, sharing a single Caddy reverse proxy instance.
 
 ## Core Problem
 The original plugin spawned a dedicated `caddy run` process for every Vite instance. Since Caddy binds to port `443` (HTTPS) by default, trying to run a second Vite project resulted in an `EADDRINUSE` error.
