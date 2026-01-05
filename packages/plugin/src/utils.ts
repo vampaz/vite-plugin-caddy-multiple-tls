@@ -16,6 +16,10 @@ function parseConfig(text: string): unknown | undefined {
   }
 }
 
+function isTlsPolicyOverlapError(text: string) {
+  return text.includes('cannot apply more than one automation policy to host');
+}
+
 /**
  * Checks if caddy cli is installed
  */
@@ -305,6 +309,9 @@ export async function addTlsPolicy(id: string, domains: string[]) {
 
   if (!res.ok) {
     const text = await res.text();
+    if (isTlsPolicyOverlapError(text)) {
+      return;
+    }
     throw new Error(`Failed to add TLS policy: ${text}`);
   }
 }

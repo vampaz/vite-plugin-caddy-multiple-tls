@@ -179,6 +179,23 @@ describe('addTlsPolicy', () => {
     expect(body.issuers[0].module).toBe('internal');
   });
 
+  it('ignores overlapping TLS policy errors', async () => {
+    fetchMock
+      .mockResolvedValueOnce(createResponse({ ok: true }))
+      .mockResolvedValueOnce(
+        createResponse({
+          ok: false,
+          status: 400,
+          text:
+            '{"error":"loading new config: loading tls app module: tls: invalid configuration: automation policy 2: cannot apply more than one automation policy to host: app.localhost (first match in policy 1)"}',
+        }),
+      );
+
+    await expect(addTlsPolicy('tls-3', ['app.localhost'])).resolves.toBeUndefined();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('initializes TLS automation when missing', async () => {
     fetchMock
       .mockResolvedValueOnce(createResponse({ ok: false, status: 404 }))

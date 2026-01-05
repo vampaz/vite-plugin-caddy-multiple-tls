@@ -3,15 +3,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import viteCaddyTlsPlugin from './index.js';
 import { addRoute, addTlsPolicy, removeRoute, removeTlsPolicy } from './utils.js';
 
-const execSyncMock = vi.fn((command: string) => {
+function execSyncMock(command: string) {
   if (command.includes('--show-toplevel')) return '/tmp/my-repo';
   if (command.includes('--abbrev-ref')) return 'feature/test';
   if (command.includes('--short')) return 'abc123';
   return '';
-});
+}
+
+const execSyncMockFn = vi.hoisted(() => vi.fn(execSyncMock));
 
 vi.mock('node:child_process', () => ({
-  execSync: execSyncMock,
+  execSync: execSyncMockFn,
 }));
 
 vi.mock('./utils.js', () => ({
