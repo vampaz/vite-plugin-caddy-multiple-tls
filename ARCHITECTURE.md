@@ -25,15 +25,16 @@ sequenceDiagram
     Plugin->>API: GET /config/ (Is running?)
     API-->>Plugin: 200 OK
     Plugin->>API: GET /.../srv0 (Base config exists?)
+    Plugin->>API: PUT /.../srv0 (Create base config if missing)
     Plugin->>API: POST /.../routes (Add Route A)
-    Note over Caddy: Caddy now routes app-a.local -> localhost:5173
+    Note over Caddy: Caddy now routes app-a.localhost -> localhost:5173
 
     Note over ViteB, Caddy: Start Project B
     ViteB->>Plugin: configureServer()
     Plugin->>API: GET /config/ (Is running?)
     API-->>Plugin: 200 OK
     Plugin->>API: POST /.../routes (Add Route B)
-    Note over Caddy: Caddy now routes app-b.local -> localhost:5174
+    Note over Caddy: Caddy now routes app-b.localhost -> localhost:5174
 
     Note over ViteA, Caddy: Stop Project A
     ViteA->>Plugin: httpServer.close()
@@ -52,7 +53,7 @@ The plugin checks if Caddy is running by pinging `http://localhost:2019/config/`
 - **If Stopped**: Executes `caddy start` (daemon mode) and waits for the API to become responsive.
 
 ### 3. Base Configuration (`srv0`)
-Before adding specific routes, the plugin ensures the "Base Config" exists. It creates a standard HTTP server listening on `:443` if one doesn't exist.
+Before adding specific routes, the plugin ensures the "Base Config" exists. It checks `/config/`, then creates a standard HTTP server listening on `:443` if one doesn't exist.
 
 ### 4. Dynamic Route Injection
 For every Vite instance, a unique `routeId` is generated. The plugin constructs a specific Caddy JSON route object:
@@ -60,7 +61,7 @@ For every Vite instance, a unique `routeId` is generated. The plugin constructs 
 ```json
 {
   "@id": "vite-proxy-<timestamp>-<random>",
-  "match": [{ "host": ["my-branch.local"] }],
+  "match": [{ "host": ["my-repo.my-branch.localhost"] }],
   "handle": [{
     "handler": "subroute",
     "routes": [{
@@ -76,12 +77,15 @@ For every Vite instance, a unique `routeId` is generated. The plugin constructs 
 
 This JSON is `POST`ed to the Caddy API (`/config/apps/http/servers/srv0/routes`). This allows Caddy to reload its configuration instantly without dropping connections.
 
-### 5. Cleanup
-The plugin listens to the Vite DevServer's `close` event. When triggered, it sends a `DELETE` request to the Caddy API using the specific `@id` of the route created during startup. This removes *only* the configuration for that specific project, leaving other running projects (and Caddy itself) untouched.
+### 5. TLS Automation (when `domain` or `baseDomain` is set)
+When a custom domain is used, the plugin creates a TLS automation policy with Caddy's internal issuer so HTTPS works for non-`.localhost` domains.
+
+### 6. Cleanup
+The plugin listens to the Vite DevServer's `close` event and process signals (SIGINT/SIGTERM). When triggered, it sends `DELETE` requests to the Caddy API using the specific `@id` of the route (and TLS policy if created). This removes *only* the configuration for that specific project, leaving other running projects (and Caddy itself) untouched.
 
 ## Data Flow
 
-1.  **Incoming Request**: Browser requests `https://repo.branch.local` (resolves to 127.0.0.1 via `/etc/hosts` or local DNS).
+1.  **Incoming Request**: Browser requests `https://repo.branch.localhost` (resolves to 127.0.0.1 automatically via the `localhost` domain).
 2.  **Caddy Listener**: Caddy receives request on port 443.
 3.  **Matcher**: Caddy iterates through active routes. Matches `host: ["repo.branch.local"]`.
 4.  **Reverse Proxy**: Request is forwarded to `localhost:5173` (HTTP).

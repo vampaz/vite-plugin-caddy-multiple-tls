@@ -1,6 +1,5 @@
 # vite-plugin-multiple-caddy
 
-
 ## Usage
 
 ```js
@@ -22,14 +21,15 @@ Will give this in the terminal, allow you to connect to your app on HTTPS with a
 > vite
 
 
-🔒 Caddy is running to proxy your traffic on https
+🔒 Caddy is proxying your traffic on https
 
-🔗 Access your local server 
+🔗 Access your local server
 🌍 https://my-repo.my-branch.localhost
 
 ```
 
 By default, the plugin derives `<repo>.<branch>.localhost` from git.
+If repo or branch can't be detected, pass `repo`/`branch` or use `domain`.
 
 If you want a fixed host without repo/branch in the URL, pass a single domain:
 
