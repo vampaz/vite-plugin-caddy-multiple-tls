@@ -81,7 +81,7 @@ For non-`.localhost` domains (like `local.example.test`), keep `internalTls: tru
 ## Recommended base domain: `.localhost`
 Why `localhost` is the best option for local development:
 - Reserved by RFC 6761 (never on the public internet).
-- Automatic resolution: `*.localhost` maps to `127.0.0.1` and `::1` without DNS or `/etc/hosts`.
+- Automatic resolution on macOS: `*.localhost` maps to `127.0.0.1` and `::1` without DNS or `/etc/hosts`.
 - Subdomain support: `api.localhost`, `foo.bar.localhost`, etc.
 - Secure context in browsers for HTTPS, service workers, and cookies.
 - Works well with Caddy and other local reverse proxies.
@@ -91,6 +91,9 @@ Example usage:
 app.localhost
 api.app.localhost
 ```
+
+> [!NOTE]
+> **Linux users:** Unlike macOS, most Linux distributions don't automatically resolve `*.localhost` subdomains. You'll need to add entries to `/etc/hosts` (e.g., `127.0.0.1 my-repo.my-branch.localhost`).
 
 ## Development
 This repo uses npm workspaces. Install from the root with `npm install`, then run workspace scripts like `npm run build --workspace packages/plugin` or `npm run dev --workspace playground`.
