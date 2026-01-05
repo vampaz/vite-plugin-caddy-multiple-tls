@@ -28,6 +28,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y caddy
+          sudo systemctl stop caddy
           sudo setcap cap_net_bind_service=+ep "$(which caddy)"
 
       - name: Build plugin
@@ -39,7 +40,10 @@ jobs:
 
       - name: Compute e2e base url
         id: e2e-url
-        run: node -e "const fs=require('node:fs');const path=require('node:path');const {execSync}=require('node:child_process');const content=fs.readFileSync('playground/base-domain.ts','utf8');const match=content.match(/'([^']+)'/);if(!match){throw new Error('playground base domain not found');}const normalize=(value)=>value.trim().replace(/^\\.+|\\.+$/g,'').toLowerCase();const sanitize=(value)=>value.toLowerCase().replace(/[^a-z0-9-]/g,'-').replace(/-+/g,'-').replace(/^-+|-+$/g,'');const execGit=(cmd)=>execSync(cmd,{stdio:['ignore','pipe','ignore']}).toString().trim();const repoRoot=execGit('git rev-parse --show-toplevel');const repo=sanitize(path.basename(repoRoot));let branch=execGit('git rev-parse --abbrev-ref HEAD');if(branch==='HEAD'){branch=execGit('git rev-parse --short HEAD');}const host=`${repo}.${sanitize(branch)}.${normalize(match[1])}`;console.log(`host=${host}`);console.log(`url=https://${host}`);" >> "$GITHUB_OUTPUT"
+        run: node tests/e2e/compute-host.js >> "$GITHUB_OUTPUT"
+
+      - name: Add host to /etc/hosts
+        run: echo "127.0.0.1 ${{ steps.e2e-url.outputs.host }}" | sudo tee -a /etc/hosts
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
