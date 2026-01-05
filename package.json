@@ -33,7 +33,7 @@
   },
   "homepage": "https://github.com/vampaz/vite-plugin-multiple-caddy/#readme",
   "devDependencies": {
-    "@changesets/cli": "^2.27.1",
+    "@changesets/cli": "^2.29.8",
     "biome": "^0.3.3",
     "typescript": "^5.9.3",
     "vite": "^7.3.0"
