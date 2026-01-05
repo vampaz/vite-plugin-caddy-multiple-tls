@@ -1,5 +1,4 @@
 import type { PluginOption } from 'vite';
-import chalk from 'chalk';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 import {
@@ -18,6 +17,8 @@ export interface ViteCaddyTlsPluginOptions {
   domain?: string;
   /** Base domain to build <repo>.<branch>.<baseDomain> (defaults to localhost) */
   baseDomain?: string;
+  /** Optional loopback domain to avoid /etc/hosts edits */
+  loopbackDomain?: LoopbackDomain;
   /** Override repo name used in derived domains */
   repo?: string;
   /** Override branch name used in derived domains */
@@ -32,6 +33,14 @@ export interface ViteCaddyTlsPluginOptions {
 type GitInfo = {
   repo?: string;
   branch?: string;
+};
+
+type LoopbackDomain = 'localtest.me' | 'lvh.me' | 'nip.io';
+
+const LOOPBACK_DOMAINS: Record<LoopbackDomain, string> = {
+  'localtest.me': 'localtest.me',
+  'lvh.me': 'lvh.me',
+  'nip.io': '127.0.0.1.nip.io',
 };
 
 function execGit(command: string) {
@@ -71,6 +80,18 @@ function normalizeBaseDomain(baseDomain: string) {
   return baseDomain.trim().replace(/^\.+|\.+$/g, '').toLowerCase();
 }
 
+function resolveBaseDomain(options: ViteCaddyTlsPluginOptions) {
+  if (options.baseDomain !== undefined) {
+    return normalizeBaseDomain(options.baseDomain);
+  }
+
+  if (options.loopbackDomain) {
+    return normalizeBaseDomain(LOOPBACK_DOMAINS[options.loopbackDomain]);
+  }
+
+  return 'localhost';
+}
+
 function sanitizeDomainLabel(value: string) {
   return value
     .toLowerCase()
@@ -80,7 +101,7 @@ function sanitizeDomainLabel(value: string) {
 }
 
 function buildDerivedDomain(options: ViteCaddyTlsPluginOptions) {
-  const baseDomain = normalizeBaseDomain(options.baseDomain ?? 'localhost');
+  const baseDomain = resolveBaseDomain(options);
   if (!baseDomain) return null;
 
   let repo = options.repo;
@@ -132,6 +153,7 @@ export default function viteCaddyTlsPlugin(
   {
     domain,
     baseDomain,
+    loopbackDomain,
     repo,
     branch,
     cors,
@@ -143,19 +165,24 @@ export default function viteCaddyTlsPlugin(
     name: 'vite:caddy-tls',
     configureServer({ httpServer, config }) {
       const fallbackPort = config.server.port || 5173;
-      const resolvedDomain = resolveDomain({ domain, baseDomain, repo, branch });
+      const resolvedDomain = resolveDomain({
+        domain,
+        baseDomain,
+        loopbackDomain,
+        repo,
+        branch,
+      });
       const domainArray = resolvedDomain ? [resolvedDomain] : [];
       const routeId = `vite-proxy-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
       const shouldUseInternalTls =
-        internalTls ?? (baseDomain !== undefined || domain !== undefined);
+        internalTls ??
+        (baseDomain !== undefined || loopbackDomain !== undefined || domain !== undefined);
       const tlsPolicyId = shouldUseInternalTls ? `${routeId}-tls` : null;
       let cleanupStarted = false;
 
       if (domainArray.length === 0) {
         console.error(
-          chalk.red(
-            'No domain resolved. Provide domain, or run inside a git repo, or pass repo/branch.',
-          ),
+          'No domain resolved. Provide domain, or run inside a git repo, or pass repo/branch.',
         );
         return;
       }
@@ -214,7 +241,7 @@ export default function viteCaddyTlsPlugin(
         if (!running) {
           running = await startCaddy();
           if (!running) {
-            console.error(chalk.red('Failed to start Caddy server.'));
+            console.error('Failed to start Caddy server.');
             return;
           }
         }
@@ -223,7 +250,7 @@ export default function viteCaddyTlsPlugin(
         try {
           await ensureBaseConfig(serverName);
         } catch (e) {
-          console.error(chalk.red('Failed to configure Caddy base settings.'), e);
+          console.error('Failed to configure Caddy base settings.', e);
           return;
         }
 
@@ -235,7 +262,7 @@ export default function viteCaddyTlsPlugin(
             await addTlsPolicy(tlsPolicyId, domainArray);
             tlsPolicyAdded = true;
           } catch (e) {
-            console.error(chalk.red('Failed to add TLS policy to Caddy.'), e);
+            console.error('Failed to add TLS policy to Caddy.', e);
             return;
           }
         }
@@ -246,12 +273,12 @@ export default function viteCaddyTlsPlugin(
           if (tlsPolicyAdded && tlsPolicyId) {
             await removeTlsPolicy(tlsPolicyId);
           }
-          console.error(chalk.red('Failed to add route to Caddy.'), e);
+          console.error('Failed to add route to Caddy.', e);
           return;
         }
 
         console.log();
-        console.log(chalk.green('🔒 Caddy is proxying your traffic on https'));
+        console.log('🔒 Caddy is proxying your traffic on https');
 
         console.log();
         console.log(
@@ -259,14 +286,14 @@ export default function viteCaddyTlsPlugin(
         );
 
         domainArray.forEach((domain) => {
-          console.log(chalk.blue(`🌍 https://${domain}`));
+          console.log(`🌍 https://${domain}`);
         });
 
-        if (process.platform === 'linux') {
+        if (process.platform === 'linux' && !loopbackDomain) {
           console.log();
-          console.log(chalk.yellow('🐧 Linux users: if the domain doesn\'t resolve, run:'));
+          console.log('🐧 Linux users: if the domain doesn\'t resolve, run:');
           domainArray.forEach((domain) => {
-            console.log(chalk.dim(`   echo "127.0.0.1 ${domain}" | sudo tee -a /etc/hosts`));
+            console.log(`   echo "127.0.0.1 ${domain}" | sudo tee -a /etc/hosts`);
           });
         }
 

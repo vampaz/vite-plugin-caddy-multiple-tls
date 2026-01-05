@@ -99,6 +99,21 @@ api.app.localhost
 >    echo "127.0.0.1 my-repo.my-branch.localhost" | sudo tee -a /etc/hosts
 > ```
 >
+> If you want to avoid `/etc/hosts` edits on Linux, set `loopbackDomain` to a public loopback domain:
+> ```ts
+> caddyTls({
+>   loopbackDomain: 'localtest.me',
+> })
+> ```
+> Supported values: `localtest.me`, `lvh.me`, `nip.io` (maps to `127.0.0.1.nip.io`). These rely on public DNS, so they can fail offline or on restricted networks.
+>
+> Why these work: they use wildcard DNS so any subdomain resolves to `127.0.0.1`, meaning the request loops back to your machine after DNS.
+> - `localtest.me` and `lvh.me`: static wildcard -> always `127.0.0.1` (great for subdomain testing).
+> - `nip.io`: dynamic parsing of the IP in the hostname (e.g. `app.192.168.1.50.nip.io`) so you can target LAN devices.
+> Why use them: subdomains behave like real domains, no `/etc/hosts` edits, and closer parity for cookies/CORS rules.
+>
+> When using loopback domains, ensure your Vite config allows the Host header, e.g. `server: { allowedHosts: true }`.
+>
 > For a permanent fix that handles all `*.localhost` domains automatically, install dnsmasq:
 > ```bash
 > sudo apt install dnsmasq

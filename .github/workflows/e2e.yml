@@ -1,28 +1,8 @@
-name: 'ci'
+name: 'E2E'
 on:
-  push:
-    branches:
-      - master
-  pull_request:
-    branches:
-      - master
+  workflow_call:
+
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set node version to 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: 'npm'
-
-      - run: npm ci
-
-      - name: Run build 
-        run: npm run build 
-
   e2e:
     runs-on: ubuntu-latest
     steps:
@@ -33,6 +13,9 @@ jobs:
         with:
           node-version: 22
           cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            tests/e2e/package-lock.json
 
       - run: npm ci
 
@@ -53,6 +36,14 @@ jobs:
 
       - name: Add host to /etc/hosts
         run: echo "127.0.0.1 ${{ steps.e2e-url.outputs.host }}" | sudo tee -a /etc/hosts
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('tests/e2e/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium

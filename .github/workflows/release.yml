@@ -1,8 +1,15 @@
 name: 'release'
 on:
-  push:
+  workflow_run:
+    workflows:
+      - 'Tests'
     branches:
       - master
+    types:
+      - completed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -11,15 +18,19 @@ permissions:
 
 jobs:
   publish:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set node version to 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: 'npm'
+          cache-dependency-path: package-lock.json
 
       - name: Upgrade npm for OIDC support
         run: npm install -g npm@latest
@@ -31,37 +42,6 @@ jobs:
 
       - name: Configure npm registry for trusted publishing
         run: printf 'registry=https://registry.npmjs.org/\n' > ~/.npmrc
-
-      - name: Install caddy
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y caddy
-          sudo systemctl stop caddy
-          sudo setcap cap_net_bind_service=+ep "$(which caddy)"
-
-      - name: Build plugin
-        run: npm run build --workspace packages/plugin
-
-      - name: Install e2e deps
-        run: npm ci
-        working-directory: tests/e2e
-
-      - name: Compute e2e base url
-        id: e2e-url
-        run: node tests/e2e/compute-host.js >> "$GITHUB_OUTPUT"
-
-      - name: Add host to /etc/hosts
-        run: echo "127.0.0.1 ${{ steps.e2e-url.outputs.host }}" | sudo tee -a /etc/hosts
-
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
-        working-directory: tests/e2e
-
-      - name: Run e2e tests
-        run: npm test
-        working-directory: tests/e2e
-        env:
-          E2E_BASE_URL: ${{ steps.e2e-url.outputs.url }}
 
       - name: Create release PR or publish
         uses: changesets/action@v1
