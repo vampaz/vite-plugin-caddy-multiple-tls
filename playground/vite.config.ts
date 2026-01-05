@@ -9,9 +9,9 @@ const config = defineConfig({
   },
   plugins: [
     caddyTls(
-      // {
-      //   baseDomain: 'mine.fu',
-      // }
+      {
+        baseDomain: 'mine.localhost',
+      }
     ),
   ],
 });
