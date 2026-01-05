@@ -107,6 +107,8 @@ api.app.localhost
 > ```
 > Supported values: `localtest.me`, `lvh.me`, `nip.io` (maps to `127.0.0.1.nip.io`). These rely on public DNS, so they can fail offline or on restricted networks.
 >
+> When using loopback domains, ensure your Vite config allows the Host header, e.g. `server: { allowedHosts: true }`.
+>
 > For a permanent fix that handles all `*.localhost` domains automatically, install dnsmasq:
 > ```bash
 > sudo apt install dnsmasq
