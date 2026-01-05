@@ -10,9 +10,9 @@ const config = defineConfig({
   },
   plugins: [
     caddyTls(
-      {
-        baseDomain: playgroundBaseDomain,
-      }
+      process.env.E2E_DOMAIN
+        ? { domain: process.env.E2E_DOMAIN }
+        : { baseDomain: playgroundBaseDomain }
     ),
   ],
 });

@@ -62,3 +62,4 @@ jobs:
         working-directory: tests/e2e
         env:
           E2E_BASE_URL: ${{ steps.e2e-url.outputs.url }}
+          E2E_DOMAIN: ${{ steps.e2e-url.outputs.host }}
