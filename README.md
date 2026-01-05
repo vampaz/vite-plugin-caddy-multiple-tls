@@ -93,7 +93,18 @@ api.app.localhost
 ```
 
 > [!NOTE]
-> **Linux users:** Unlike macOS, most Linux distributions don't automatically resolve `*.localhost` subdomains. You'll need to add entries to `/etc/hosts` (e.g., `127.0.0.1 my-repo.my-branch.localhost`).
+> **Linux users:** Unlike macOS, most Linux distributions don't automatically resolve `*.localhost` subdomains. The plugin will detect Linux and show you the exact command to run:
+> ```
+> 🐧 Linux users: if the domain doesn't resolve, run:
+>    echo "127.0.0.1 my-repo.my-branch.localhost" | sudo tee -a /etc/hosts
+> ```
+>
+> For a permanent fix that handles all `*.localhost` domains automatically, install dnsmasq:
+> ```bash
+> sudo apt install dnsmasq
+> echo "address=/.localhost/127.0.0.1" | sudo tee /etc/dnsmasq.d/localhost.conf
+> sudo systemctl restart dnsmasq
+> ```
 
 ## Development
 This repo uses npm workspaces. Install from the root with `npm install`, then run workspace scripts like `npm run build --workspace packages/plugin` or `npm run dev --workspace playground`.

@@ -262,6 +262,14 @@ export default function viteCaddyTlsPlugin(
           console.log(chalk.blue(`🌍 https://${domain}`));
         });
 
+        if (process.platform === 'linux') {
+          console.log();
+          console.log(chalk.yellow('🐧 Linux users: if the domain doesn\'t resolve, run:'));
+          domainArray.forEach((domain) => {
+            console.log(chalk.dim(`   echo "127.0.0.1 ${domain}" | sudo tee -a /etc/hosts`));
+          });
+        }
+
         console.log();
 
         // 4. Remove route on close or process exit
