@@ -1,32 +1,8 @@
-name: 'ci'
+name: 'E2E'
 on:
-  push:
-    branches:
-      - master
-  pull_request:
-    branches:
-      - master
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  workflow_call:
+
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set node version to 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: 'npm'
-          cache-dependency-path: package-lock.json
-
-      - run: npm ci
-
-      - name: Run plugin build
-        run: npm run build --workspace packages/plugin
-
   e2e:
     runs-on: ubuntu-latest
     steps:

@@ -13,7 +13,11 @@ permissions:
   id-token: write
 
 jobs:
+  e2e:
+    uses: ./.github/workflows/e2e.yml
+
   publish:
+    needs: e2e
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,9 +27,7 @@ jobs:
         with:
           node-version: 22
           cache: 'npm'
-          cache-dependency-path: |
-            package-lock.json
-            tests/e2e/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Upgrade npm for OIDC support
         run: npm install -g npm@latest
@@ -37,42 +39,6 @@ jobs:
 
       - name: Configure npm registry for trusted publishing
         run: printf 'registry=https://registry.npmjs.org/\n' > ~/.npmrc
-
-      - name: Install caddy
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y caddy
-          sudo systemctl stop caddy
-          sudo setcap cap_net_bind_service=+ep "$(which caddy)"
-
-      - name: Install e2e deps
-        run: npm ci
-        working-directory: tests/e2e
-
-      - name: Compute e2e base url
-        id: e2e-url
-        run: node tests/e2e/compute-host.js >> "$GITHUB_OUTPUT"
-
-      - name: Add host to /etc/hosts
-        run: echo "127.0.0.1 ${{ steps.e2e-url.outputs.host }}" | sudo tee -a /etc/hosts
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('tests/e2e/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-
-
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
-        working-directory: tests/e2e
-
-      - name: Run e2e tests
-        run: npm test
-        working-directory: tests/e2e
-        env:
-          E2E_BASE_URL: ${{ steps.e2e-url.outputs.url }}
 
       - name: Create release PR or publish
         uses: changesets/action@v1
