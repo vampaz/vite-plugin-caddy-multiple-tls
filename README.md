@@ -105,7 +105,7 @@ api.app.localhost
 >   loopbackDomain: 'localtest.me',
 > })
 > ```
-> Supported values: `localtest.me`, `lvh.me`, `nip.io` (maps to `127.0.0.1.nip.io`). These rely on public DNS.
+> Supported values: `localtest.me`, `lvh.me`, `nip.io` (maps to `127.0.0.1.nip.io`). These rely on public DNS, so they can fail offline or on restricted networks.
 >
 > For a permanent fix that handles all `*.localhost` domains automatically, install dnsmasq:
 > ```bash
