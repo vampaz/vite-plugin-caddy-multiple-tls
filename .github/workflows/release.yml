@@ -20,9 +20,17 @@ jobs:
         with:
           node-version: 22
           cache: 'npm'
-          registry-url: 'https://registry.npmjs.org'
+
+      - name: Upgrade npm for OIDC support
+        run: npm install -g npm@latest
 
       - run: npm ci
+
+      - name: Check npm version
+        run: npm --version
+
+      - name: Configure npm registry for trusted publishing
+        run: printf 'registry=https://registry.npmjs.org/\n' > ~/.npmrc
 
       - name: Install caddy
         run: |
