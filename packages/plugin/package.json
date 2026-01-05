@@ -31,7 +31,6 @@
     "dev": "tsup --watch src/**/* src/index.ts --format esm --dts-resolve",
     "build": "tsup src/index.ts --format esm --dts",
     "prepublishOnly": "npm run build",
-    "build:docs": "typedoc --out docs src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -54,7 +53,6 @@
     "@types/node": "^25.0.3",
     "fs-extra": "^11.3.3",
     "tsup": "^8.5.1",
-    "typedoc": "^0.28.15",
     "vite": "^7.3.0",
     "vitest": "^4.0.16"
   },
