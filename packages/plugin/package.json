@@ -1,8 +1,20 @@
 {
   "name": "vite-plugin-multiple-caddy",
   "version": "0.0.1",
+  "description": "Vite plugin that uses Caddy to provide local HTTPS with derived domains.",
+  "keywords": [
+    "vite",
+    "plugin",
+    "caddy",
+    "https",
+    "tls",
+    "local-development"
+  ],
   "license": "MIT",
   "author": "vampaz",
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "dist"
   ],
@@ -18,6 +30,7 @@
   "scripts": {
     "dev": "tsup --watch src/**/* src/index.ts --format esm --dts-resolve",
     "build": "tsup src/index.ts --format esm --dts",
+    "prepublishOnly": "npm run build",
     "build:docs": "typedoc --out docs src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest"
