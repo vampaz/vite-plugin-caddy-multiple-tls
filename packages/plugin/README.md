@@ -1,4 +1,4 @@
-# vite-plugin-multiple-caddy
+# vite-plugin-caddy-multiple-tls
 
 Vite plugin that runs Caddy to proxy local development traffic over HTTPS with
 derived domains like `<repo>.<branch>.localhost`.
@@ -6,14 +6,14 @@ derived domains like `<repo>.<branch>.localhost`.
 ## Install
 
 ```sh
-npm install -D vite-plugin-multiple-caddy
+npm install -D vite-plugin-caddy-multiple-tls
 ```
 
 ## Usage
 
 ```js
 import { defineConfig } from 'vite';
-import caddyTls from 'vite-plugin-multiple-caddy';
+import caddyTls from 'vite-plugin-caddy-multiple-tls';
 
 export default defineConfig({
   plugins: [caddyTls()],

@@ -1,11 +1,11 @@
-# vite-plugin-multiple-caddy
+# vite-plugin-caddy-multiple-tls
 
 ## Usage
 
 ```js
 // vite.config.js
 import { defineConfig } from 'vite';
-import caddyTls from 'vite-plugin-multiple-caddy';
+import caddyTls from 'vite-plugin-caddy-multiple-tls';
 
 const config = defineConfig({
   plugins: [
@@ -36,7 +36,7 @@ If you want a fixed host without repo/branch in the URL, pass a single domain:
 ```js
 // vite.config.js
 import { defineConfig } from 'vite';
-import caddyTls from 'vite-plugin-multiple-caddy';
+import caddyTls from 'vite-plugin-caddy-multiple-tls';
 
 const config = defineConfig({
   plugins: [
@@ -54,7 +54,7 @@ To derive a domain like `<repo>.<branch>.<baseDomain>` automatically from git (r
 ```js
 // vite.config.js
 import { defineConfig } from 'vite';
-import caddyTls from 'vite-plugin-multiple-caddy';
+import caddyTls from 'vite-plugin-caddy-multiple-tls';
 
 const config = defineConfig({
   plugins: [
@@ -81,7 +81,7 @@ For non-`.localhost` domains (like `local.example.test`), keep `internalTls: tru
 ## Recommended base domain: `.localhost`
 Why `localhost` is the best option for local development:
 - Reserved by RFC 6761 (never on the public internet).
-- Automatic resolution: `*.localhost` maps to `127.0.0.1` and `::1` without DNS or `/etc/hosts`.
+- Automatic resolution on macOS: `*.localhost` maps to `127.0.0.1` and `::1` without DNS or `/etc/hosts`.
 - Subdomain support: `api.localhost`, `foo.bar.localhost`, etc.
 - Secure context in browsers for HTTPS, service workers, and cookies.
 - Works well with Caddy and other local reverse proxies.
@@ -91,6 +91,20 @@ Example usage:
 app.localhost
 api.app.localhost
 ```
+
+> [!NOTE]
+> **Linux users:** Unlike macOS, most Linux distributions don't automatically resolve `*.localhost` subdomains. The plugin will detect Linux and show you the exact command to run:
+> ```
+> 🐧 Linux users: if the domain doesn't resolve, run:
+>    echo "127.0.0.1 my-repo.my-branch.localhost" | sudo tee -a /etc/hosts
+> ```
+>
+> For a permanent fix that handles all `*.localhost` domains automatically, install dnsmasq:
+> ```bash
+> sudo apt install dnsmasq
+> echo "address=/.localhost/127.0.0.1" | sudo tee /etc/dnsmasq.d/localhost.conf
+> sudo systemctl restart dnsmasq
+> ```
 
 ## Development
 This repo uses npm workspaces. Install from the root with `npm install`, then run workspace scripts like `npm run build --workspace packages/plugin` or `npm run dev --workspace playground`.
