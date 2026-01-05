@@ -1,8 +1,12 @@
 name: 'release'
 on:
-  push:
+  workflow_run:
+    workflows:
+      - 'Tests'
     branches:
       - master
+    types:
+      - completed
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -13,14 +17,13 @@ permissions:
   id-token: write
 
 jobs:
-  e2e:
-    uses: ./.github/workflows/e2e.yml
-
   publish:
-    needs: e2e
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set node version to 22
         uses: actions/setup-node@v4
