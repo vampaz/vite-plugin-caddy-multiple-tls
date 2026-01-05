@@ -188,4 +188,46 @@ describe('viteCaddyTlsPlugin', () => {
     const domains = vi.mocked(addRoute).mock.calls[0][1];
     expect(domains).toEqual(['my-repo.feature-test.localhost']);
   });
+
+  it('supports loopback domains', async () => {
+    const httpServer = createHttpServer(4002);
+    const plugin = viteCaddyTlsPlugin({
+      loopbackDomain: 'localtest.me',
+    });
+
+    (plugin.configureServer as (ctx: any) => void)({
+      httpServer,
+      config: { server: { port: 5173 } },
+    });
+
+    httpServer.listening = true;
+    httpServer.emit('listening');
+    await flushPromises();
+    await flushPromises();
+
+    expect(addRoute).toHaveBeenCalledTimes(1);
+    const domains = vi.mocked(addRoute).mock.calls[0][1];
+    expect(domains).toEqual(['my-repo.feature-test.localtest.me']);
+  });
+
+  it('maps nip.io to a loopback base domain', async () => {
+    const httpServer = createHttpServer(4003);
+    const plugin = viteCaddyTlsPlugin({
+      loopbackDomain: 'nip.io',
+    });
+
+    (plugin.configureServer as (ctx: any) => void)({
+      httpServer,
+      config: { server: { port: 5173 } },
+    });
+
+    httpServer.listening = true;
+    httpServer.emit('listening');
+    await flushPromises();
+    await flushPromises();
+
+    expect(addRoute).toHaveBeenCalledTimes(1);
+    const domains = vi.mocked(addRoute).mock.calls[0][1];
+    expect(domains).toEqual(['my-repo.feature-test.127.0.0.1.nip.io']);
+  });
 });

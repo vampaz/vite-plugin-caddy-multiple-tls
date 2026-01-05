@@ -18,6 +18,8 @@ export interface ViteCaddyTlsPluginOptions {
   domain?: string;
   /** Base domain to build <repo>.<branch>.<baseDomain> (defaults to localhost) */
   baseDomain?: string;
+  /** Optional loopback domain to avoid /etc/hosts edits */
+  loopbackDomain?: LoopbackDomain;
   /** Override repo name used in derived domains */
   repo?: string;
   /** Override branch name used in derived domains */
@@ -32,6 +34,14 @@ export interface ViteCaddyTlsPluginOptions {
 type GitInfo = {
   repo?: string;
   branch?: string;
+};
+
+type LoopbackDomain = 'localtest.me' | 'lvh.me' | 'nip.io';
+
+const LOOPBACK_DOMAINS: Record<LoopbackDomain, string> = {
+  'localtest.me': 'localtest.me',
+  'lvh.me': 'lvh.me',
+  'nip.io': '127.0.0.1.nip.io',
 };
 
 function execGit(command: string) {
@@ -71,6 +81,18 @@ function normalizeBaseDomain(baseDomain: string) {
   return baseDomain.trim().replace(/^\.+|\.+$/g, '').toLowerCase();
 }
 
+function resolveBaseDomain(options: ViteCaddyTlsPluginOptions) {
+  if (options.baseDomain !== undefined) {
+    return normalizeBaseDomain(options.baseDomain);
+  }
+
+  if (options.loopbackDomain) {
+    return normalizeBaseDomain(LOOPBACK_DOMAINS[options.loopbackDomain]);
+  }
+
+  return 'localhost';
+}
+
 function sanitizeDomainLabel(value: string) {
   return value
     .toLowerCase()
@@ -80,7 +102,7 @@ function sanitizeDomainLabel(value: string) {
 }
 
 function buildDerivedDomain(options: ViteCaddyTlsPluginOptions) {
-  const baseDomain = normalizeBaseDomain(options.baseDomain ?? 'localhost');
+  const baseDomain = resolveBaseDomain(options);
   if (!baseDomain) return null;
 
   let repo = options.repo;
@@ -132,6 +154,7 @@ export default function viteCaddyTlsPlugin(
   {
     domain,
     baseDomain,
+    loopbackDomain,
     repo,
     branch,
     cors,
@@ -143,11 +166,18 @@ export default function viteCaddyTlsPlugin(
     name: 'vite:caddy-tls',
     configureServer({ httpServer, config }) {
       const fallbackPort = config.server.port || 5173;
-      const resolvedDomain = resolveDomain({ domain, baseDomain, repo, branch });
+      const resolvedDomain = resolveDomain({
+        domain,
+        baseDomain,
+        loopbackDomain,
+        repo,
+        branch,
+      });
       const domainArray = resolvedDomain ? [resolvedDomain] : [];
       const routeId = `vite-proxy-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
       const shouldUseInternalTls =
-        internalTls ?? (baseDomain !== undefined || domain !== undefined);
+        internalTls ??
+        (baseDomain !== undefined || loopbackDomain !== undefined || domain !== undefined);
       const tlsPolicyId = shouldUseInternalTls ? `${routeId}-tls` : null;
       let cleanupStarted = false;
 
@@ -262,7 +292,7 @@ export default function viteCaddyTlsPlugin(
           console.log(chalk.blue(`🌍 https://${domain}`));
         });
 
-        if (process.platform === 'linux') {
+        if (process.platform === 'linux' && !loopbackDomain) {
           console.log();
           console.log(chalk.yellow('🐧 Linux users: if the domain doesn\'t resolve, run:'));
           domainArray.forEach((domain) => {

@@ -99,6 +99,14 @@ api.app.localhost
 >    echo "127.0.0.1 my-repo.my-branch.localhost" | sudo tee -a /etc/hosts
 > ```
 >
+> If you want to avoid `/etc/hosts` edits on Linux, set `loopbackDomain` to a public loopback domain:
+> ```ts
+> caddyTls({
+>   loopbackDomain: 'localtest.me',
+> })
+> ```
+> Supported values: `localtest.me`, `lvh.me`, `nip.io` (maps to `127.0.0.1.nip.io`). These rely on public DNS.
+>
 > For a permanent fix that handles all `*.localhost` domains automatically, install dnsmasq:
 > ```bash
 > sudo apt install dnsmasq
