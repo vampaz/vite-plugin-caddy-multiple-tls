@@ -29,7 +29,8 @@
   },
   "scripts": {
     "dev": "tsup --watch src/**/* src/index.ts --format esm --dts-resolve",
-    "build": "tsup src/index.ts --format esm --dts",
+    "sync-readme": "bash scripts/sync-readme.sh",
+    "build": "npm run sync-readme && tsup src/index.ts --format esm --dts",
     "prepublishOnly": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest"
