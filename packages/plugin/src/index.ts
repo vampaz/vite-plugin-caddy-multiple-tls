@@ -1,5 +1,4 @@
 import type { PluginOption } from 'vite';
-import chalk from 'chalk';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 import {
@@ -183,9 +182,7 @@ export default function viteCaddyTlsPlugin(
 
       if (domainArray.length === 0) {
         console.error(
-          chalk.red(
-            'No domain resolved. Provide domain, or run inside a git repo, or pass repo/branch.',
-          ),
+          'No domain resolved. Provide domain, or run inside a git repo, or pass repo/branch.',
         );
         return;
       }
@@ -244,7 +241,7 @@ export default function viteCaddyTlsPlugin(
         if (!running) {
           running = await startCaddy();
           if (!running) {
-            console.error(chalk.red('Failed to start Caddy server.'));
+            console.error('Failed to start Caddy server.');
             return;
           }
         }
@@ -253,7 +250,7 @@ export default function viteCaddyTlsPlugin(
         try {
           await ensureBaseConfig(serverName);
         } catch (e) {
-          console.error(chalk.red('Failed to configure Caddy base settings.'), e);
+          console.error('Failed to configure Caddy base settings.', e);
           return;
         }
 
@@ -265,7 +262,7 @@ export default function viteCaddyTlsPlugin(
             await addTlsPolicy(tlsPolicyId, domainArray);
             tlsPolicyAdded = true;
           } catch (e) {
-            console.error(chalk.red('Failed to add TLS policy to Caddy.'), e);
+            console.error('Failed to add TLS policy to Caddy.', e);
             return;
           }
         }
@@ -276,12 +273,12 @@ export default function viteCaddyTlsPlugin(
           if (tlsPolicyAdded && tlsPolicyId) {
             await removeTlsPolicy(tlsPolicyId);
           }
-          console.error(chalk.red('Failed to add route to Caddy.'), e);
+          console.error('Failed to add route to Caddy.', e);
           return;
         }
 
         console.log();
-        console.log(chalk.green('🔒 Caddy is proxying your traffic on https'));
+        console.log('🔒 Caddy is proxying your traffic on https');
 
         console.log();
         console.log(
@@ -289,14 +286,14 @@ export default function viteCaddyTlsPlugin(
         );
 
         domainArray.forEach((domain) => {
-          console.log(chalk.blue(`🌍 https://${domain}`));
+          console.log(`🌍 https://${domain}`);
         });
 
         if (process.platform === 'linux' && !loopbackDomain) {
           console.log();
-          console.log(chalk.yellow('🐧 Linux users: if the domain doesn\'t resolve, run:'));
+          console.log('🐧 Linux users: if the domain doesn\'t resolve, run:');
           domainArray.forEach((domain) => {
-            console.log(chalk.dim(`   echo "127.0.0.1 ${domain}" | sudo tee -a /etc/hosts`));
+            console.log(`   echo "127.0.0.1 ${domain}" | sudo tee -a /etc/hosts`);
           });
         }
 
