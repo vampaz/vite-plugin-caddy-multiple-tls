@@ -115,7 +115,7 @@ api.app.localhost
 > - `nip.io`: dynamic parsing of the IP in the hostname (e.g. `app.192.168.1.50.nip.io`) so you can target LAN devices.
 > Why use them: subdomains behave like real domains, no `/etc/hosts` edits, and closer parity for cookies/CORS rules.
 >
-> When using loopback domains, ensure your Vite config allows the Host header, e.g. `server: { allowedHosts: true }`.
+> When using loopback domains, ensure your Vite config allows the Host header and binds to all interfaces, e.g. `server: { allowedHosts: true, host: true }`.
 >
 > For a permanent fix that handles all `*.localhost` domains automatically, install dnsmasq:
 > ```bash
