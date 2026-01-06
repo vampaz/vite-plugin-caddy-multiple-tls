@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "playwright test"
+    "test": "playwright test",
+    "test:preview": "playwright test --config playwright.preview.config.ts",
+    "test:all": "npm run test && npm run test:preview"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.1"

@@ -24,3 +24,12 @@ test('shows the resolved location and tags', async function ({ page }) {
   await page.waitForSelector('.chips span');
   await expect(page.locator('.chips span')).toHaveCount(3);
 });
+
+test('supports preview mode', async ({ page }) => {
+  test.skip(!process.env.E2E_PREVIEW, 'Preview-only test');
+  const response = await page.goto('/');
+  expect(response?.url()).toContain('https://');
+  await page.waitForSelector('#location');
+  await expect(page.locator('#location')).toContainText('https://');
+  await expect(page.locator('script[src*="/@vite/client"]')).toHaveCount(0);
+});
