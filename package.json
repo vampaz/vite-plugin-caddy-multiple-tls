@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "start": "npm run start --workspaces --if-present",
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build --workspace packages/plugin",
     "changeset": "changeset",
     "changeset:version": "changeset version",
     "changeset:publish": "changeset publish",

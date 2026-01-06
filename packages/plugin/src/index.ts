@@ -92,6 +92,17 @@ function resolveBaseDomain(options: ViteCaddyTlsPluginOptions) {
   return 'localhost';
 }
 
+function resolveUpstreamHost(host: string | boolean | undefined) {
+  if (typeof host === 'string') {
+    const trimmed = host.trim();
+    if (trimmed && trimmed !== '0.0.0.0' && trimmed !== '::') {
+      return trimmed;
+    }
+  }
+
+  return '127.0.0.1';
+}
+
 function sanitizeDomainLabel(value: string) {
   return value
     .toLowerCase()
@@ -163,7 +174,8 @@ export default function viteCaddyTlsPlugin(
 ): PluginOption {
   return {
     name: 'vite:caddy-tls',
-    configureServer({ httpServer, config }) {
+    configureServer(server) {
+      const { httpServer, config } = server;
       const fallbackPort = config.server.port || 5173;
       const resolvedDomain = resolveDomain({
         domain,
@@ -179,6 +191,9 @@ export default function viteCaddyTlsPlugin(
         (baseDomain !== undefined || loopbackDomain !== undefined || domain !== undefined);
       const tlsPolicyId = shouldUseInternalTls ? `${routeId}-tls` : null;
       let cleanupStarted = false;
+      let resolvedPort: number | null = null;
+      let resolvedHost: string | null = null;
+      let setupStarted = false;
 
       if (domainArray.length === 0) {
         console.error(
@@ -188,13 +203,71 @@ export default function viteCaddyTlsPlugin(
       }
       let tlsPolicyAdded = false;
 
-      function getServerPort() {
-        if (!httpServer) return fallbackPort;
-        const address = httpServer.address();
+      function getPortFromAddress(address: unknown) {
         if (address && typeof address === 'object' && 'port' in address) {
-          return address.port;
+          const port = (address as { port: unknown }).port;
+          if (typeof port === 'number') {
+            return port;
+          }
         }
-        return fallbackPort;
+        return null;
+      }
+
+      function updateResolvedTarget() {
+        if (resolvedPort !== null && resolvedHost !== null) return;
+
+        const resolvedUrl = server.resolvedUrls?.local?.[0];
+        if (resolvedUrl) {
+          try {
+            const url = new URL(resolvedUrl);
+            if (resolvedHost === null && url.hostname) {
+              resolvedHost = url.hostname === 'localhost' ? '127.0.0.1' : url.hostname;
+            }
+            const port = Number(url.port);
+            if (resolvedPort === null && !Number.isNaN(port)) {
+              resolvedPort = port;
+            }
+          } catch (e) {
+            // Ignore URL parsing errors
+          }
+        }
+
+        if (httpServer) {
+          const address = httpServer.address();
+          if (address && typeof address === 'object') {
+            const port = getPortFromAddress(address);
+            if (resolvedPort === null && port !== null) {
+              resolvedPort = port;
+            }
+            if (resolvedHost === null && 'address' in address) {
+              const host = (address as { address?: unknown }).address;
+              if (
+                typeof host === 'string' &&
+                host !== '0.0.0.0' &&
+                host !== '::'
+              ) {
+                resolvedHost = host;
+              }
+            }
+          }
+        }
+
+        if (resolvedPort === null && typeof config.server.port === 'number') {
+          resolvedPort = config.server.port;
+        }
+        if (resolvedHost === null) {
+          resolvedHost = resolveUpstreamHost(config.server.host);
+        }
+      }
+
+      function getServerPort() {
+        updateResolvedTarget();
+        return resolvedPort ?? fallbackPort;
+      }
+
+      function getUpstreamHost() {
+        updateResolvedTarget();
+        return resolvedHost ?? '127.0.0.1';
       }
 
       async function cleanupRoute() {
@@ -255,6 +328,7 @@ export default function viteCaddyTlsPlugin(
         }
 
         const port = getServerPort();
+        const upstreamHost = getUpstreamHost();
 
         // 3. Add the specific route for this app
         if (tlsPolicyId) {
@@ -268,7 +342,7 @@ export default function viteCaddyTlsPlugin(
         }
 
         try {
-          await addRoute(routeId, domainArray, port, cors, serverName);
+          await addRoute(routeId, domainArray, port, cors, serverName, upstreamHost);
         } catch (e) {
           if (tlsPolicyAdded && tlsPolicyId) {
             await removeTlsPolicy(tlsPolicyId);
@@ -282,7 +356,7 @@ export default function viteCaddyTlsPlugin(
 
         console.log();
         console.log(
-          `🔗 Access your local ${domainArray.length > 1 ? 'servers' : 'server'} `,
+          `🔗 Access your local ${domainArray.length > 1 ? 'servers' : 'server'}!`,
         );
 
         domainArray.forEach((domain) => {
@@ -304,16 +378,40 @@ export default function viteCaddyTlsPlugin(
         httpServer?.once('close', onServerClose);
       }
 
-      function onListening() {
+      function runSetupOnce() {
+        if (setupStarted) return;
+        setupStarted = true;
         void setupRoute();
       }
 
+      function wrapServerListen() {
+        if (typeof server.listen !== 'function') return false;
+        const originalListen = server.listen.bind(server);
+        server.listen = async function (port?: number, isRestart?: boolean) {
+          const result = await originalListen(port, isRestart);
+          if (typeof port === 'number') {
+            resolvedPort = port;
+          } else {
+            updateResolvedTarget();
+          }
+          runSetupOnce();
+          return result;
+        };
+        return true;
+      }
+
+      function onListening() {
+        updateResolvedTarget();
+        runSetupOnce();
+      }
+
+      const listenWrapped = wrapServerListen();
       if (httpServer?.listening) {
-        void setupRoute();
+        runSetupOnce();
       } else if (httpServer) {
         httpServer.once('listening', onListening);
-      } else {
-        void setupRoute();
+      } else if (!listenWrapped) {
+        runSetupOnce();
       }
     },
   };

@@ -223,12 +223,20 @@ async function ensureTlsAutomation() {
 /**
  * Adds a route to proxy a specific domain to a local port
  */
+function formatDialAddress(host: string, port: number) {
+  if (host.includes(':') && !host.startsWith('[')) {
+    return `[${host}]:${port}`;
+  }
+  return `${host}:${port}`;
+}
+
 export async function addRoute(
   id: string,
   domains: string[],
   port: number,
   cors?: string,
   serverName = DEFAULT_SERVER_NAME,
+  upstreamHost = '127.0.0.1',
 ) {
   const handlers: Array<Record<string, unknown>> = [];
   if (cors) {
@@ -252,7 +260,7 @@ export async function addRoute(
   }
   handlers.push({
     handler: 'reverse_proxy',
-    upstreams: [{ dial: `localhost:${port}` }],
+    upstreams: [{ dial: formatDialAddress(upstreamHost, port) }],
   });
 
   const route = {
