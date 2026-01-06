@@ -3,6 +3,12 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+const LOOPBACK_DOMAINS = {
+  'localtest.me': 'localtest.me',
+  'lvh.me': 'lvh.me',
+  'nip.io': '127.0.0.1.nip.io',
+};
+
 function execGit(command) {
   return execSync(command, { stdio: ['ignore', 'pipe', 'ignore'] })
     .toString()
@@ -11,6 +17,12 @@ function execGit(command) {
 
 function normalizeBaseDomain(baseDomain) {
   return baseDomain.trim().replace(/^\.+|\.+$/g, '').toLowerCase();
+}
+
+function normalizeDomain(domain) {
+  const trimmed = domain.trim().toLowerCase();
+  if (!trimmed) return null;
+  return trimmed;
 }
 
 function sanitizeDomainLabel(value) {
@@ -35,7 +47,26 @@ function getPlaygroundBaseDomain() {
 }
 
 export function computeHost() {
-  const baseDomain = normalizeBaseDomain(getPlaygroundBaseDomain() ?? 'localhost');
+  const e2eDomain = process.env.E2E_DOMAIN;
+  if (e2eDomain) {
+    const normalized = normalizeDomain(e2eDomain);
+    if (!normalized) throw new Error('E2E_DOMAIN is invalid');
+    return normalized;
+  }
+
+  const e2eLoopbackDomain = process.env.E2E_LOOPBACK_DOMAIN;
+  let baseDomain = process.env.E2E_BASE_DOMAIN;
+
+  if (!baseDomain && e2eLoopbackDomain && LOOPBACK_DOMAINS[e2eLoopbackDomain]) {
+    baseDomain = LOOPBACK_DOMAINS[e2eLoopbackDomain];
+  }
+
+  if (!baseDomain && !e2eLoopbackDomain) {
+    baseDomain = getPlaygroundBaseDomain();
+  }
+
+  baseDomain = normalizeBaseDomain(baseDomain ?? 'localhost');
+
   if (!baseDomain) {
     throw new Error('Playground base domain is empty.');
   }
@@ -72,10 +103,15 @@ export function computeHost() {
     throw new Error('Derived repo/branch are empty.');
   }
 
+  if (process.env.E2E_PREVIEW) {
+    return `${repoLabel}.${branchLabel}-preview.${baseDomain}`;
+  }
+
   return `${repoLabel}.${branchLabel}.${baseDomain}`;
 }
 
 export function computeUrl() {
+
   return `https://${computeHost()}`;
 }
 

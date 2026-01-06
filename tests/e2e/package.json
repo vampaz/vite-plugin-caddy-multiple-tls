@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "playwright test",
+    "test:combinations": "./run-combinations.sh",
     "test:preview": "playwright test --config playwright.preview.config.ts",
     "test:all": "npm run test && npm run test:preview"
   },
