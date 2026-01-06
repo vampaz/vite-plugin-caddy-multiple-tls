@@ -1,5 +1,8 @@
 # vite-plugin-caddy-multiple-tls
 
+## What it does
+Runs Caddy alongside Vite to give you HTTPS locally with automatic, per-branch domains like `<repo>.<branch>.localhost`, so you can use real hostnames, cookies, and secure APIs without manual proxy setup.
+
 ## Usage
 
 ```js

@@ -1,6 +1,7 @@
 dist
 docs
 node_modules
+packages/plugin/README.md
 TODOs.md
 temp
 .DS_Store

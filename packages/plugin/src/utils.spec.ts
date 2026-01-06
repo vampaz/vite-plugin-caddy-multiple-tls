@@ -134,6 +134,7 @@ describe('addRoute', () => {
       4321,
       'https://example.test',
       'custom',
+      '127.0.0.1',
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -148,6 +149,20 @@ describe('addRoute', () => {
     expect(handlers[0].response.set['Access-Control-Allow-Origin']).toEqual([
       'https://example.test',
     ]);
+  });
+
+  it('uses the upstream host when provided', async () => {
+    fetchMock.mockResolvedValue(createResponse({ ok: true }));
+
+    await addRoute('route-1', ['app.localhost'], 4321, undefined, 'srv0', 'localhost');
+
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    const handlers = body.handle[0].routes[0].handle;
+    const proxy = handlers.find((handler: { handler?: string }) => {
+      return handler.handler === 'reverse_proxy';
+    }) as { upstreams?: Array<{ dial: string }> } | undefined;
+
+    expect(proxy?.upstreams?.[0]?.dial).toBe('localhost:4321');
   });
 });
 
