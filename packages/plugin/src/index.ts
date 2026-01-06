@@ -392,10 +392,8 @@ export default function viteCaddyTlsPlugin(
         return;
       }
 
-      console.log();
       console.log('🔒 Caddy is proxying your traffic on https');
 
-      console.log();
       console.log(
         `🔗 Access your local ${domainArray.length > 1 ? 'servers' : 'server'}!`,
       );
@@ -405,14 +403,11 @@ export default function viteCaddyTlsPlugin(
       });
 
       if (process.platform === 'linux' && !loopbackDomain) {
-        console.log();
         console.log('🐧 Linux users: if the domain doesn\'t resolve, run:');
         domainArray.forEach((domain) => {
           console.log(`   echo "127.0.0.1 ${domain}" | sudo tee -a /etc/hosts`);
         });
       }
-
-      console.log();
 
       // 4. Remove route on close or process exit
       registerProcessCleanup();
