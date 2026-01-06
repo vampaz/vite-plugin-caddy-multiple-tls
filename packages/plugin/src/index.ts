@@ -102,7 +102,6 @@ function resolveUpstreamHost(host: string | boolean | undefined) {
 
   return '127.0.0.1';
 }
-
 function sanitizeDomainLabel(value: string) {
   return value
     .toLowerCase()
