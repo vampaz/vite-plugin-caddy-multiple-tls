@@ -200,7 +200,7 @@ export default function viteCaddyTlsPlugin(
     );
   }
 
-  const setupServer = (server: ViteDevServer | PreviewServer) => {
+  function setupServer(server: ViteDevServer | PreviewServer) {
     const { httpServer, config } = server;
     const previewMode = isPreviewServer(server);
     const fallbackPort = previewMode
@@ -392,10 +392,9 @@ export default function viteCaddyTlsPlugin(
         return;
       }
 
-      console.log('🔒 Caddy is proxying your traffic on https');
-
+      console.log('\n🔒 Caddy is proxying your traffic on https');
       console.log(
-        `🔗 Access your local ${domainArray.length > 1 ? 'servers' : 'server'}!`,
+        `\n🔗 Access your local ${domainArray.length > 1 ? 'servers' : 'server'}!`,
       );
 
       domainArray.forEach((domain) => {
@@ -403,11 +402,12 @@ export default function viteCaddyTlsPlugin(
       });
 
       if (process.platform === 'linux' && !loopbackDomain) {
-        console.log('🐧 Linux users: if the domain doesn\'t resolve, run:');
+        console.log('\n🐧 Linux users: if the domain doesn\'t resolve, run:');
         domainArray.forEach((domain) => {
           console.log(`   echo "127.0.0.1 ${domain}" | sudo tee -a /etc/hosts`);
         });
       }
+      console.log();
 
       // 4. Remove route on close or process exit
       registerProcessCleanup();
@@ -449,7 +449,7 @@ export default function viteCaddyTlsPlugin(
     } else if (!listenWrapped) {
       runSetupOnce();
     }
-  };
+  }
 
   return {
     name: 'vite:caddy-tls',

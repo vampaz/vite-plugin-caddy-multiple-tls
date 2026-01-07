@@ -111,7 +111,6 @@ export function computeHost() {
 }
 
 export function computeUrl() {
-
   return `https://${computeHost()}`;
 }
 
