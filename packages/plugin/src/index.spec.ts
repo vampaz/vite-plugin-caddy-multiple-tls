@@ -74,9 +74,9 @@ describe('viteCaddyTlsPlugin', () => {
     const httpServer = createHttpServer(4321);
     const plugin = viteCaddyTlsPlugin({
       domain: 'app.localhost',
-    });
+    }) as any;
 
-    (plugin.configureServer as (ctx: any) => void)({
+    plugin.configureServer({
       httpServer,
       config: { server: { port: 5173 } },
     });
@@ -100,12 +100,12 @@ describe('viteCaddyTlsPlugin', () => {
       repo: 'cleanup',
       branch: 'main',
       internalTls: true,
-    });
+    }) as any;
     const killSpy = vi
       .spyOn(process, 'kill')
       .mockImplementation(() => true);
 
-    (plugin.configureServer as (ctx: any) => void)({
+    plugin.configureServer({
       httpServer,
       config: { server: { port: 5173 } },
     });
@@ -131,9 +131,9 @@ describe('viteCaddyTlsPlugin', () => {
       baseDomain: 'local.conekto.eu',
       repo: 'secure',
       branch: 'main',
-    });
+    }) as any;
 
-    (plugin.configureServer as (ctx: any) => void)({
+    plugin.configureServer({
       httpServer,
       config: { server: { port: 5173 } },
     });
@@ -153,9 +153,9 @@ describe('viteCaddyTlsPlugin', () => {
     const httpServer = createHttpServer(4010);
     const plugin = viteCaddyTlsPlugin({
       domain: 'explicit.localhost',
-    });
+    }) as any;
 
-    (plugin.configureServer as (ctx: any) => void)({
+    plugin.configureServer({
       httpServer,
       config: { server: { port: 5173 } },
     });
@@ -172,9 +172,9 @@ describe('viteCaddyTlsPlugin', () => {
 
   it('defaults baseDomain to localhost', async () => {
     const httpServer = createHttpServer(4000);
-    const plugin = viteCaddyTlsPlugin();
+    const plugin = viteCaddyTlsPlugin() as any;
 
-    (plugin.configureServer as (ctx: any) => void)({
+    plugin.configureServer({
       httpServer,
       config: { server: { port: 5173 } },
     });
@@ -193,9 +193,9 @@ describe('viteCaddyTlsPlugin', () => {
     const httpServer = createHttpServer(4002);
     const plugin = viteCaddyTlsPlugin({
       loopbackDomain: 'localtest.me',
-    });
+    }) as any;
 
-    (plugin.configureServer as (ctx: any) => void)({
+    plugin.configureServer({
       httpServer,
       config: { server: { port: 5173 } },
     });
@@ -214,9 +214,9 @@ describe('viteCaddyTlsPlugin', () => {
     const httpServer = createHttpServer(4003);
     const plugin = viteCaddyTlsPlugin({
       loopbackDomain: 'nip.io',
-    });
+    }) as any;
 
-    (plugin.configureServer as (ctx: any) => void)({
+    plugin.configureServer({
       httpServer,
       config: { server: { port: 5173 } },
     });
@@ -229,5 +229,27 @@ describe('viteCaddyTlsPlugin', () => {
     expect(addRoute).toHaveBeenCalledTimes(1);
     const domains = vi.mocked(addRoute).mock.calls[0][1];
     expect(domains).toEqual(['my-repo.feature-test.127.0.0.1.nip.io']);
+  });
+
+  it('supports preview server', async () => {
+    const httpServer = createHttpServer(4173);
+    const plugin = viteCaddyTlsPlugin({
+      domain: 'preview.localhost',
+    }) as any;
+
+    plugin.configurePreviewServer({
+      httpServer,
+      config: { preview: { port: 4173 }, server: {} },
+    });
+
+    httpServer.listening = true;
+    httpServer.emit('listening');
+    await flushPromises();
+    await flushPromises();
+
+    expect(addRoute).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(addRoute).mock.calls[0];
+    expect(call[1]).toEqual(['preview.localhost']);
+    expect(call[2]).toBe(4173);
   });
 });
