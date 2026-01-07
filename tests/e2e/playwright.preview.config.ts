@@ -7,7 +7,15 @@ process.env.E2E_PREVIEW = '1';
 
 function resolveBaseUrl() {
   if (process.env.E2E_BASE_URL) {
-    return process.env.E2E_BASE_URL;
+    // Transform the base URL to add -preview suffix to the branch label
+    // e.g., https://repo.branch.domain -> https://repo.branch-preview.domain
+    const url = new URL(process.env.E2E_BASE_URL);
+    const parts = url.hostname.split('.');
+    if (parts.length >= 3) {
+      parts[1] = `${parts[1]}-preview`;
+      url.hostname = parts.join('.');
+    }
+    return url.toString().replace(/\/$/, '');
   }
   return computeUrl();
 }

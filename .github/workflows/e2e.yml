@@ -34,8 +34,14 @@ jobs:
         id: e2e-url
         run: node tests/e2e/compute-host.js >> "$GITHUB_OUTPUT"
 
-      - name: Add host to /etc/hosts
-        run: echo "127.0.0.1 ${{ steps.e2e-url.outputs.host }}" | sudo tee -a /etc/hosts
+      - name: Compute e2e preview url
+        id: e2e-preview-url
+        run: E2E_PREVIEW=1 node tests/e2e/compute-host.js >> "$GITHUB_OUTPUT"
+
+      - name: Add hosts to /etc/hosts
+        run: |
+          echo "127.0.0.1 ${{ steps.e2e-url.outputs.host }}" | sudo tee -a /etc/hosts
+          echo "127.0.0.1 ${{ steps.e2e-preview-url.outputs.host }}" | sudo tee -a /etc/hosts
 
       - name: Cache Playwright browsers
         uses: actions/cache@v4
