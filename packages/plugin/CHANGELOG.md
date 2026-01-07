@@ -1,5 +1,11 @@
 # vite-plugin-caddy-multiple-tls
 
+## 1.3.0
+
+### Minor Changes
+
+- 2c1ee4f: feat: add support for vite preview server
+
 ## 1.2.0
 
 ### Minor Changes
