@@ -164,6 +164,28 @@ describe('addRoute', () => {
 
     expect(proxy?.upstreams?.[0]?.dial).toBe('localhost:4321');
   });
+
+  it('overrides the upstream Host header when provided', async () => {
+    fetchMock.mockResolvedValue(createResponse({ ok: true }));
+
+    await addRoute(
+      'route-1',
+      ['app.localhost'],
+      4321,
+      undefined,
+      'srv0',
+      'localhost',
+      'localhost',
+    );
+
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    const handlers = body.handle[0].routes[0].handle;
+    const proxy = handlers.find((handler: { handler?: string }) => {
+      return handler.handler === 'reverse_proxy';
+    }) as { headers?: { request?: { set?: Record<string, string> } } } | undefined;
+
+    expect(proxy?.headers?.request?.set?.Host).toBe('localhost');
+  });
 });
 
 describe('addTlsPolicy', () => {
