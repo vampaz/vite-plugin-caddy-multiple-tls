@@ -237,6 +237,7 @@ export async function addRoute(
   cors?: string,
   serverName = DEFAULT_SERVER_NAME,
   upstreamHost = '127.0.0.1',
+  upstreamHostHeader?: string,
 ) {
   const handlers: Array<Record<string, unknown>> = [];
   if (cors) {
@@ -258,10 +259,22 @@ export async function addRoute(
       },
     });
   }
-  handlers.push({
+  const reverseProxyHandler: Record<string, unknown> = {
     handler: 'reverse_proxy',
     upstreams: [{ dial: formatDialAddress(upstreamHost, port) }],
-  });
+  };
+
+  if (upstreamHostHeader) {
+    reverseProxyHandler.headers = {
+      request: {
+        set: {
+          Host: upstreamHostHeader,
+        },
+      },
+    };
+  }
+
+  handlers.push(reverseProxyHandler);
 
   const route = {
     '@id': id,

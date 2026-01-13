@@ -28,6 +28,11 @@ export interface ViteCaddyTlsPluginOptions {
   serverName?: string;
   /** Use Caddy's internal CA for the provided domains (defaults to true when baseDomain or domain is set) */
   internalTls?: boolean;
+  /**
+   * Override the Host header sent to the Vite dev server.
+   * Useful when upstream middleware (e.g. Wrangler/Miniflare) only accepts localhost hosts.
+   */
+  upstreamHostHeader?: string;
 }
 
 type GitInfo = {
@@ -169,6 +174,7 @@ export default function viteCaddyTlsPlugin(
     cors,
     serverName,
     internalTls,
+    upstreamHostHeader,
   }: ViteCaddyTlsPluginOptions = {},
 ): PluginOption {
   function isPreviewServer(server: ViteDevServer | PreviewServer) {
@@ -383,7 +389,15 @@ export default function viteCaddyTlsPlugin(
       }
 
       try {
-        await addRoute(routeId, domainArray, port, cors, serverName, upstreamHost);
+        await addRoute(
+          routeId,
+          domainArray,
+          port,
+          cors,
+          serverName,
+          upstreamHost,
+          upstreamHostHeader,
+        );
       } catch (e) {
         if (tlsPolicyAdded && tlsPolicyId) {
           await removeTlsPolicy(tlsPolicyId);

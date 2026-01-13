@@ -1,5 +1,11 @@
 # vite-plugin-caddy-multiple-tls
 
+## 1.4.0
+
+### Minor Changes
+
+- add upstreamHostHeader option to override the upstream Host header
+
 ## 1.3.0
 
 ### Minor Changes
