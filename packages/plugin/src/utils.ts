@@ -268,7 +268,7 @@ export async function addRoute(
     reverseProxyHandler.headers = {
       request: {
         set: {
-          Host: upstreamHostHeader,
+          Host: [upstreamHostHeader],
         },
       },
     };

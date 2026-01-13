@@ -184,7 +184,7 @@ describe('addRoute', () => {
       return handler.handler === 'reverse_proxy';
     }) as { headers?: { request?: { set?: Record<string, string> } } } | undefined;
 
-    expect(proxy?.headers?.request?.set?.Host).toBe('localhost');
+    expect(proxy?.headers?.request?.set?.Host).toEqual(['localhost']);
   });
 });
 

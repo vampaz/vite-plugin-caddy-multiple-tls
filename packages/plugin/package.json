@@ -1,6 +1,6 @@
 {
   "name": "vite-plugin-caddy-multiple-tls",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Vite plugin that uses Caddy to provide local HTTPS with derived domains.",
   "keywords": [
     "vite",

@@ -1,5 +1,11 @@
 # vite-plugin-caddy-multiple-tls
 
+## 1.4.1
+
+### Patch Changes
+
+- fix reverse_proxy request header override shape for Caddy
+
 ## 1.4.0
 
 ### Minor Changes
