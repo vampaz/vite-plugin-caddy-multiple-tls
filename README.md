@@ -20,6 +20,8 @@ export default config;
 ```
 
 Will give this in the terminal, allow you to connect to your app on HTTPS with a self-signed and trusted cert.
+
+The plugin defaults `server.host = true` and `server.allowedHosts = true` (plus preview equivalents) so custom hostnames work without extra config. Override these in your Vite config if you need different values.
 ```
 > vite
 
@@ -126,6 +128,8 @@ api.app.localhost
 
 ## Development
 This repo uses npm workspaces. Install from the root with `npm install`, then run workspace scripts like `npm run build --workspace packages/plugin` or `npm run dev --workspace playground`.
+
+The published package README is synced from the root `README.md` via `packages/plugin/scripts/sync-readme.sh`.
 
 ## Contributing
 See [CONTRIBUTING.md](./CONTRIBUTING.md) to see how to get started.
