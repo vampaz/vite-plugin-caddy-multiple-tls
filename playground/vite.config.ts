@@ -40,15 +40,15 @@ if (e2ePreview) {
 }
 
 const config = defineConfig({
-  server: {
-    port: 3000,
-    host: true,
-    allowedHosts: true,
-  },
-  preview: {
-    port: 4173,
-    host: true,
-  },
+  // server: {
+  //   port: 3000,
+  //   host: true,
+  //   allowedHosts: true,
+  // },
+  // preview: {
+  //   port: 4173,
+  //   host: true,
+  // },
   plugins: [
     caddyTls({
       domain: e2eDomain,

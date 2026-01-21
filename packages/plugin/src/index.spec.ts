@@ -252,4 +252,41 @@ describe('viteCaddyTlsPlugin', () => {
     expect(call[1]).toEqual(['preview.localhost']);
     expect(call[2]).toBe(4173);
   });
+
+  it('defaults host and allowedHosts when undefined', () => {
+    const plugin = viteCaddyTlsPlugin() as any;
+
+    const config = plugin.config?.({});
+
+    expect(config).toEqual({
+      server: {
+        host: true,
+        allowedHosts: true,
+      },
+      preview: {
+        host: true,
+        allowedHosts: true,
+      },
+    });
+  });
+
+  it('preserves user-provided host settings', () => {
+    const plugin = viteCaddyTlsPlugin() as any;
+
+    const config = plugin.config?.({
+      server: { host: '127.0.0.1', allowedHosts: false },
+      preview: { host: '0.0.0.0', allowedHosts: ['example.test'] },
+    });
+
+    expect(config).toEqual({
+      server: {
+        host: '127.0.0.1',
+        allowedHosts: false,
+      },
+      preview: {
+        host: '0.0.0.0',
+        allowedHosts: ['example.test'],
+      },
+    });
+  });
 });

@@ -467,6 +467,24 @@ export default function viteCaddyTlsPlugin(
 
   return {
     name: 'vite:caddy-tls',
+    config(userConfig) {
+      return {
+        server: {
+          host: userConfig.server?.host === undefined ? true : userConfig.server.host,
+          allowedHosts:
+            userConfig.server?.allowedHosts === undefined
+              ? true
+              : userConfig.server.allowedHosts,
+        },
+        preview: {
+          host: userConfig.preview?.host === undefined ? true : userConfig.preview.host,
+          allowedHosts:
+            userConfig.preview?.allowedHosts === undefined
+              ? true
+              : userConfig.preview.allowedHosts,
+        },
+      };
+    },
     configureServer(server) {
       setupServer(server);
     },

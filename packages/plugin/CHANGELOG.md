@@ -1,5 +1,11 @@
 # vite-plugin-caddy-multiple-tls
 
+## 1.4.2
+
+### Patch Changes
+
+- default Vite host/allowedHosts settings for proxy-friendly local domains
+
 ## 1.4.1
 
 ### Patch Changes
