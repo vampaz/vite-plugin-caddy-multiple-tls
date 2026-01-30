@@ -1,7 +1,15 @@
 import { execSync } from 'node:child_process';
 
-const CADDY_API = 'http://localhost:2019';
 const DEFAULT_SERVER_NAME = 'srv0';
+let caddyApiUrl = 'http://localhost:2019';
+
+export function setCaddyApiUrl(url: string) {
+  caddyApiUrl = url;
+}
+
+export function getCaddyApiUrl() {
+  return caddyApiUrl;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -38,7 +46,7 @@ export function validateCaddyIsInstalled() {
  */
 export async function isCaddyRunning(): Promise<boolean> {
   try {
-    const res = await fetch(`${CADDY_API}/config/`);
+    const res = await fetch(`${caddyApiUrl}/config/`);
     return res.ok;
   } catch (e) {
     return false;
@@ -69,7 +77,7 @@ export async function startCaddy() {
  */
 export async function ensureBaseConfig(serverName = DEFAULT_SERVER_NAME) {
   // Check if server exists
-  const serverUrl = `${CADDY_API}/config/apps/http/servers/${serverName}`;
+  const serverUrl = `${caddyApiUrl}/config/apps/http/servers/${serverName}`;
   const res = await fetch(serverUrl);
   if (res.ok) return;
 
@@ -84,7 +92,7 @@ export async function ensureBaseConfig(serverName = DEFAULT_SERVER_NAME) {
     },
   };
 
-  const configRes = await fetch(`${CADDY_API}/config/`);
+  const configRes = await fetch(`${caddyApiUrl}/config/`);
   if (!configRes.ok) {
     const text = await configRes.text();
     throw new Error(`Failed to read Caddy config: ${text}`);
@@ -103,7 +111,7 @@ export async function ensureBaseConfig(serverName = DEFAULT_SERVER_NAME) {
     (isRecord(config) && Object.keys(config).length === 0);
 
   if (isEmptyConfig) {
-    const loadRes = await fetch(`${CADDY_API}/load`, {
+    const loadRes = await fetch(`${caddyApiUrl}/load`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -128,7 +136,7 @@ export async function ensureBaseConfig(serverName = DEFAULT_SERVER_NAME) {
   let hasServers = isRecord(servers);
 
   if (!hasApps) {
-    const createAppsRes = await fetch(`${CADDY_API}/config/apps`, {
+    const createAppsRes = await fetch(`${caddyApiUrl}/config/apps`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
@@ -141,7 +149,7 @@ export async function ensureBaseConfig(serverName = DEFAULT_SERVER_NAME) {
   }
 
   if (!hasHttp) {
-    const createHttpRes = await fetch(`${CADDY_API}/config/apps/http`, {
+    const createHttpRes = await fetch(`${caddyApiUrl}/config/apps/http`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ servers: {} }),
@@ -155,7 +163,7 @@ export async function ensureBaseConfig(serverName = DEFAULT_SERVER_NAME) {
   }
 
   if (!hasServers) {
-    const createServersRes = await fetch(`${CADDY_API}/config/apps/http/servers`, {
+    const createServersRes = await fetch(`${caddyApiUrl}/config/apps/http/servers`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
@@ -179,7 +187,7 @@ export async function ensureBaseConfig(serverName = DEFAULT_SERVER_NAME) {
 }
 
 async function ensureTlsAutomation() {
-  const policiesUrl = `${CADDY_API}/config/apps/tls/automation/policies`;
+  const policiesUrl = `${caddyApiUrl}/config/apps/tls/automation/policies`;
   const policiesRes = await fetch(policiesUrl);
   if (policiesRes.ok) return;
 
@@ -193,7 +201,7 @@ async function ensureTlsAutomation() {
     );
   }
 
-  const automationRes = await fetch(`${CADDY_API}/config/apps/tls/automation`, {
+  const automationRes = await fetch(`${caddyApiUrl}/config/apps/tls/automation`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ policies: [] }),
@@ -208,7 +216,7 @@ async function ensureTlsAutomation() {
     );
   }
 
-  const tlsRes = await fetch(`${CADDY_API}/config/apps/tls`, {
+  const tlsRes = await fetch(`${caddyApiUrl}/config/apps/tls`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ automation: { policies: [] } }),
@@ -293,7 +301,7 @@ export async function addRoute(
   };
 
   const res = await fetch(
-    `${CADDY_API}/config/apps/http/servers/${serverName}/routes`,
+    `${caddyApiUrl}/config/apps/http/servers/${serverName}/routes`,
     {
       method: 'POST', // Append to routes list
       headers: { 'Content-Type': 'application/json' },
@@ -322,7 +330,7 @@ export async function addTlsPolicy(id: string, domains: string[]) {
     ],
   };
 
-  const res = await fetch(`${CADDY_API}/config/apps/tls/automation/policies`, {
+  const res = await fetch(`${caddyApiUrl}/config/apps/tls/automation/policies`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(policy),
@@ -341,25 +349,29 @@ export async function addTlsPolicy(id: string, domains: string[]) {
  * Removes a route by its ID
  */
 export async function removeRoute(id: string) {
-  const res = await fetch(`${CADDY_API}/id/${id}`, {
+  const res = await fetch(`${caddyApiUrl}/id/${id}`, {
     method: 'DELETE',
   });
 
   // 404 is fine (already gone)
   if (!res.ok && res.status !== 404) {
     console.error(`Failed to remove route ${id}`);
+    return false;
   }
+  return true;
 }
 
 /**
  * Removes a TLS automation policy by its ID
  */
 export async function removeTlsPolicy(id: string) {
-  const res = await fetch(`${CADDY_API}/id/${id}`, {
+  const res = await fetch(`${caddyApiUrl}/id/${id}`, {
     method: 'DELETE',
   });
 
   if (!res.ok && res.status !== 404) {
     console.error(`Failed to remove TLS policy ${id}`);
+    return false;
   }
+  return true;
 }
