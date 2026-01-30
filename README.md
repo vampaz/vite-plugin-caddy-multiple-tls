@@ -54,6 +54,24 @@ const config = defineConfig({
 export default config;
 ```
 
+You can also pass multiple explicit domains:
+
+```js
+// vite.config.js
+import { defineConfig } from 'vite';
+import caddyTls from 'vite-plugin-caddy-multiple-tls';
+
+const config = defineConfig({
+  plugins: [
+    caddyTls({
+      domain: ['app.localhost', 'api.localhost'],
+    })
+  ]
+});
+
+export default config;
+```
+
 To derive a domain like `<repo>.<branch>.<baseDomain>` automatically from git (repo name first, then branch):
 
 ```js
@@ -79,6 +97,24 @@ For a zero-config experience, use `baseDomain: 'localhost'` (the default) so the
 `internalTls` defaults to `true` when you pass `baseDomain` or `domain`. You can override it if needed.
 
 For non-`.localhost` domains (like `local.example.test`), keep `internalTls: true` to force Caddy to use its internal CA for certificates.
+
+If your Caddy Admin API is not on the default `http://localhost:2019`, set `caddyApiUrl`:
+
+```js
+// vite.config.js
+import { defineConfig } from 'vite';
+import caddyTls from 'vite-plugin-caddy-multiple-tls';
+
+const config = defineConfig({
+  plugins: [
+    caddyTls({
+      caddyApiUrl: 'http://localhost:2020',
+    })
+  ]
+});
+
+export default config;
+```
 
 > [!IMPORTANT]  
 > **Hosts file limitation:** If you use a custom domain, you must **manually** add each generated subdomain to your `/etc/hosts` file (e.g., `127.0.0.1 repo.branch.local.example.test`). System hosts files **do not support wildcards** (e.g., `*.local.example.test`), so you lose the benefit of automatic domain resolution that `localhost` provides.
