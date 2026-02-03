@@ -23,8 +23,8 @@ vi.mock('./utils.js', () => ({
   ensureBaseConfig: vi.fn(() => Promise.resolve()),
   addRoute: vi.fn(() => Promise.resolve()),
   addTlsPolicy: vi.fn(() => Promise.resolve()),
-  removeRoute: vi.fn(() => Promise.resolve()),
-  removeTlsPolicy: vi.fn(() => Promise.resolve()),
+  removeRoute: vi.fn(() => Promise.resolve(true)),
+  removeTlsPolicy: vi.fn(() => Promise.resolve(true)),
 }));
 
 type Listener = (...args: unknown[]) => void;
@@ -125,6 +125,39 @@ describe('viteCaddyTlsPlugin', () => {
     expect(killSpy).toHaveBeenCalledWith(process.pid, 'SIGTERM');
   });
 
+  it('retries cleanup when route removal fails', async () => {
+    const httpServer = createHttpServer(5002);
+    const plugin = viteCaddyTlsPlugin({
+      domain: 'retry.localhost',
+    }) as any;
+    const killSpy = vi
+      .spyOn(process, 'kill')
+      .mockImplementation(() => true);
+    const removeRouteMock = vi.mocked(removeRoute);
+    removeRouteMock
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+
+    plugin.configureServer({
+      httpServer,
+      config: { server: { port: 5173 } },
+    });
+
+    httpServer.listening = true;
+    httpServer.emit('listening');
+    await flushPromises();
+    await flushPromises();
+
+    process.emit('SIGTERM');
+    await flushPromises();
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    await flushPromises();
+
+    expect(removeRouteMock).toHaveBeenCalledTimes(3);
+    expect(killSpy).toHaveBeenCalledWith(process.pid, 'SIGTERM');
+  });
+
   it('adds a TLS policy when baseDomain is provided', async () => {
     const httpServer = createHttpServer(4322);
     const plugin = viteCaddyTlsPlugin({
@@ -170,6 +203,46 @@ describe('viteCaddyTlsPlugin', () => {
     expect(domains).toEqual(['explicit.localhost']);
   });
 
+  it('normalizes explicit domains', async () => {
+    const httpServer = createHttpServer(4011);
+    const plugin = viteCaddyTlsPlugin({
+      domain: '  APP.Localhost  ',
+    }) as any;
+
+    plugin.configureServer({
+      httpServer,
+      config: { server: { port: 5173 } },
+    });
+
+    httpServer.listening = true;
+    httpServer.emit('listening');
+    await flushPromises();
+    await flushPromises();
+
+    const domains = vi.mocked(addRoute).mock.calls[0][1];
+    expect(domains).toEqual(['app.localhost']);
+  });
+
+  it('supports multiple explicit domains', async () => {
+    const httpServer = createHttpServer(4012);
+    const plugin = viteCaddyTlsPlugin({
+      domain: ['One.Localhost', 'two.localhost', ''],
+    }) as any;
+
+    plugin.configureServer({
+      httpServer,
+      config: { server: { port: 5173 } },
+    });
+
+    httpServer.listening = true;
+    httpServer.emit('listening');
+    await flushPromises();
+    await flushPromises();
+
+    const domains = vi.mocked(addRoute).mock.calls[0][1];
+    expect(domains).toEqual(['one.localhost', 'two.localhost']);
+  });
+
   it('defaults baseDomain to localhost', async () => {
     const httpServer = createHttpServer(4000);
     const plugin = viteCaddyTlsPlugin() as any;
@@ -185,6 +258,26 @@ describe('viteCaddyTlsPlugin', () => {
     await flushPromises();
 
     expect(addRoute).toHaveBeenCalledTimes(1);
+    const domains = vi.mocked(addRoute).mock.calls[0][1];
+    expect(domains).toEqual(['my-repo.feature-test.localhost']);
+  });
+
+  it('normalizes baseDomain input', async () => {
+    const httpServer = createHttpServer(4004);
+    const plugin = viteCaddyTlsPlugin({
+      baseDomain: '.LocalHost.',
+    }) as any;
+
+    plugin.configureServer({
+      httpServer,
+      config: { server: { port: 5173 } },
+    });
+
+    httpServer.listening = true;
+    httpServer.emit('listening');
+    await flushPromises();
+    await flushPromises();
+
     const domains = vi.mocked(addRoute).mock.calls[0][1];
     expect(domains).toEqual(['my-repo.feature-test.localhost']);
   });
@@ -253,6 +346,104 @@ describe('viteCaddyTlsPlugin', () => {
     expect(call[2]).toBe(4173);
   });
 
+  it('prefers resolved URLs when available', async () => {
+    const httpServer = createHttpServer(5173);
+    const plugin = viteCaddyTlsPlugin({
+      domain: 'resolved.localhost',
+    }) as any;
+
+    plugin.configureServer({
+      httpServer,
+      resolvedUrls: { local: ['http://dev.example.test:3999'] },
+      config: { server: { port: 5173 } },
+    });
+
+    httpServer.listening = true;
+    httpServer.emit('listening');
+    await flushPromises();
+    await flushPromises();
+
+    const call = vi.mocked(addRoute).mock.calls[0];
+    expect(call[2]).toBe(3999);
+    expect(call[5]).toBe('dev.example.test');
+  });
+
+  it('resolves wildcard hosts to loopback for upstream', async () => {
+    const httpServer = createHttpServer(4005);
+    const plugin = viteCaddyTlsPlugin({
+      domain: 'wildcard.localhost',
+    }) as any;
+
+    plugin.configureServer({
+      httpServer,
+      config: { server: { host: '0.0.0.0', port: 4005 } },
+    });
+
+    httpServer.listening = true;
+    httpServer.emit('listening');
+    await flushPromises();
+    await flushPromises();
+
+    const call = vi.mocked(addRoute).mock.calls[0];
+    expect(call[5]).toBe('127.0.0.1');
+  });
+
+  it('defaults hmr when a domain is resolved', () => {
+    const plugin = viteCaddyTlsPlugin({
+      domain: 'app.localhost',
+    }) as any;
+
+    const config = plugin.config?.({});
+
+    expect(config).toEqual({
+      server: {
+        host: true,
+        allowedHosts: true,
+        hmr: {
+          protocol: 'wss',
+          host: 'app.localhost',
+          clientPort: 443,
+        },
+      },
+      preview: {
+        host: true,
+        allowedHosts: true,
+      },
+    });
+  });
+
+  it('preserves user-provided hmr settings', () => {
+    const plugin = viteCaddyTlsPlugin({
+      domain: 'app.localhost',
+    }) as any;
+
+    const config = plugin.config?.({
+      server: {
+        hmr: {
+          protocol: 'ws',
+          host: 'custom.localhost',
+          clientPort: 3000,
+        },
+      },
+    });
+
+    expect(config).toEqual({
+      server: {
+        host: true,
+        allowedHosts: true,
+        hmr: {
+          protocol: 'ws',
+          host: 'custom.localhost',
+          clientPort: 3000,
+        },
+      },
+      preview: {
+        host: true,
+        allowedHosts: true,
+      },
+    });
+  });
+
   it('defaults host and allowedHosts when undefined', () => {
     const plugin = viteCaddyTlsPlugin() as any;
 
@@ -262,6 +453,11 @@ describe('viteCaddyTlsPlugin', () => {
       server: {
         host: true,
         allowedHosts: true,
+        hmr: {
+          protocol: 'wss',
+          host: 'my-repo.feature-test.localhost',
+          clientPort: 443,
+        },
       },
       preview: {
         host: true,
@@ -282,6 +478,11 @@ describe('viteCaddyTlsPlugin', () => {
       server: {
         host: '127.0.0.1',
         allowedHosts: false,
+        hmr: {
+          protocol: 'wss',
+          host: 'my-repo.feature-test.localhost',
+          clientPort: 443,
+        },
       },
       preview: {
         host: '0.0.0.0',

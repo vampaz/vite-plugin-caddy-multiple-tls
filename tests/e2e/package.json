@@ -9,6 +9,6 @@
     "test:all": "npm run test && npm run test:preview"
   },
   "devDependencies": {
-    "@playwright/test": "^1.49.1"
+    "@playwright/test": "^1.58.1"
   }
 }
