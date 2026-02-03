@@ -12,6 +12,7 @@ import {
   removeTlsPolicy,
   getCaddyApiUrl,
   setCaddyApiUrl,
+  DEFAULT_CADDY_API_URL,
 } from './utils.js';
 
 export interface ViteCaddyTlsPluginOptions {
@@ -204,7 +205,10 @@ export default function viteCaddyTlsPlugin(
     if (normalizedApiUrl) {
       setCaddyApiUrl(normalizedApiUrl);
     } else {
-      console.error('caddyApiUrl is empty after trimming.');
+      setCaddyApiUrl(DEFAULT_CADDY_API_URL);
+      console.warn(
+        `caddyApiUrl is empty after trimming. Falling back to ${DEFAULT_CADDY_API_URL}.`,
+      );
     }
   }
 
@@ -566,6 +570,23 @@ export default function viteCaddyTlsPlugin(
   return {
     name: 'vite:caddy-tls',
     config(userConfig) {
+      const resolvedDomains = resolveDomains({
+        domain,
+        baseDomain,
+        loopbackDomain,
+        repo,
+        branch,
+      });
+      const defaultHmrDomain = resolvedDomains?.[0];
+      const hmrConfig =
+        userConfig.server?.hmr === undefined && defaultHmrDomain
+          ? {
+              protocol: 'wss',
+              host: defaultHmrDomain,
+              clientPort: 443,
+            }
+          : userConfig.server?.hmr;
+
       return {
         server: {
           host: userConfig.server?.host === undefined ? true : userConfig.server.host,
@@ -573,6 +594,7 @@ export default function viteCaddyTlsPlugin(
             userConfig.server?.allowedHosts === undefined
               ? true
               : userConfig.server.allowedHosts,
+          ...(hmrConfig !== undefined ? { hmr: hmrConfig } : {}),
         },
         preview: {
           host: userConfig.preview?.host === undefined ? true : userConfig.preview.host,

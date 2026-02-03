@@ -388,6 +388,62 @@ describe('viteCaddyTlsPlugin', () => {
     expect(call[5]).toBe('127.0.0.1');
   });
 
+  it('defaults hmr when a domain is resolved', () => {
+    const plugin = viteCaddyTlsPlugin({
+      domain: 'app.localhost',
+    }) as any;
+
+    const config = plugin.config?.({});
+
+    expect(config).toEqual({
+      server: {
+        host: true,
+        allowedHosts: true,
+        hmr: {
+          protocol: 'wss',
+          host: 'app.localhost',
+          clientPort: 443,
+        },
+      },
+      preview: {
+        host: true,
+        allowedHosts: true,
+      },
+    });
+  });
+
+  it('preserves user-provided hmr settings', () => {
+    const plugin = viteCaddyTlsPlugin({
+      domain: 'app.localhost',
+    }) as any;
+
+    const config = plugin.config?.({
+      server: {
+        hmr: {
+          protocol: 'ws',
+          host: 'custom.localhost',
+          clientPort: 3000,
+        },
+      },
+    });
+
+    expect(config).toEqual({
+      server: {
+        host: true,
+        allowedHosts: true,
+        hmr: {
+          protocol: 'ws',
+          host: 'custom.localhost',
+          clientPort: 3000,
+        },
+      },
+      preview: {
+        host: true,
+        allowedHosts: true,
+      },
+    });
+  });
+
   it('defaults host and allowedHosts when undefined', () => {
     const plugin = viteCaddyTlsPlugin() as any;
 
@@ -397,6 +453,11 @@ describe('viteCaddyTlsPlugin', () => {
       server: {
         host: true,
         allowedHosts: true,
+        hmr: {
+          protocol: 'wss',
+          host: 'my-repo.feature-test.localhost',
+          clientPort: 443,
+        },
       },
       preview: {
         host: true,
@@ -417,6 +478,11 @@ describe('viteCaddyTlsPlugin', () => {
       server: {
         host: '127.0.0.1',
         allowedHosts: false,
+        hmr: {
+          protocol: 'wss',
+          host: 'my-repo.feature-test.localhost',
+          clientPort: 443,
+        },
       },
       preview: {
         host: '0.0.0.0',

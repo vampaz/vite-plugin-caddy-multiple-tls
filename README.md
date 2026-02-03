@@ -21,7 +21,7 @@ export default config;
 
 Will give this in the terminal, allow you to connect to your app on HTTPS with a self-signed and trusted cert.
 
-The plugin defaults `server.host = true` and `server.allowedHosts = true` (plus preview equivalents) so custom hostnames work without extra config. Override these in your Vite config if you need different values.
+The plugin defaults `server.host = true` and `server.allowedHosts = true` (plus preview equivalents) so custom hostnames work without extra config. When a domain is resolved, it also defaults `server.hmr` to use `wss` on port `443` and the resolved host, isolating multiple Vite instances without extra config. Override these in your Vite config if you need different values.
 ```
 > vite
 
@@ -98,7 +98,7 @@ For a zero-config experience, use `baseDomain: 'localhost'` (the default) so the
 
 For non-`.localhost` domains (like `local.example.test`), keep `internalTls: true` to force Caddy to use its internal CA for certificates.
 
-If your Caddy Admin API is not on the default `http://localhost:2019`, set `caddyApiUrl`:
+If your Caddy Admin API is not on the default `http://localhost:2019`, set `caddyApiUrl`. Empty or whitespace values fall back to the default.
 
 ```js
 // vite.config.js

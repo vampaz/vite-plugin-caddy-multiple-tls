@@ -1,5 +1,11 @@
 # vite-plugin-caddy-multiple-tls
 
+## 1.5.0
+
+### Minor Changes
+
+- Default Vite HMR config to use the resolved domain over WSS on port 443 when users do not specify HMR settings, isolating multiple instances.
+
 ## 1.4.2
 
 ### Patch Changes

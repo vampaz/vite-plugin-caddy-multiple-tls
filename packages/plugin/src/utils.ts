@@ -1,7 +1,8 @@
 import { execSync } from 'node:child_process';
 
 const DEFAULT_SERVER_NAME = 'srv0';
-let caddyApiUrl = 'http://localhost:2019';
+export const DEFAULT_CADDY_API_URL = 'http://localhost:2019';
+let caddyApiUrl = DEFAULT_CADDY_API_URL;
 
 export function setCaddyApiUrl(url: string) {
   caddyApiUrl = url;
