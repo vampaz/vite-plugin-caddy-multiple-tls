@@ -388,6 +388,43 @@ describe('viteCaddyTlsPlugin', () => {
     expect(call[5]).toBe('127.0.0.1');
   });
 
+  it('uses the actual bound port when listen auto-increments', async () => {
+    const httpServer = new EventEmitter() as EventEmitter & {
+      listening: boolean;
+      currentPort: number;
+      address: () => { port: number } | null;
+    };
+
+    httpServer.listening = false;
+    httpServer.currentPort = 5174;
+    httpServer.address = function () {
+      if (!httpServer.listening) return null;
+      return { port: httpServer.currentPort };
+    };
+
+    const server = {
+      httpServer,
+      config: { server: { port: 5173 } },
+      listen: async function () {
+        httpServer.listening = true;
+        httpServer.emit('listening');
+      },
+    };
+
+    const plugin = viteCaddyTlsPlugin({
+      domain: 'auto-port.localhost',
+    }) as any;
+
+    plugin.configureServer(server);
+    await server.listen(5173, false);
+    await flushPromises();
+    await flushPromises();
+
+    expect(addRoute).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(addRoute).mock.calls[0];
+    expect(call[2]).toBe(5174);
+  });
+
   it('defaults hmr when a domain is resolved', () => {
     const plugin = viteCaddyTlsPlugin({
       domain: 'app.localhost',

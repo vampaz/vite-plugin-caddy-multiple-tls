@@ -541,11 +541,10 @@ export default function viteCaddyTlsPlugin(
       const originalListen = server.listen.bind(server);
       server.listen = async function (port?: number, isRestart?: boolean) {
         const result = await originalListen(port, isRestart);
-        if (typeof port === 'number') {
-          resolvedPort = port;
-        } else {
-          updateResolvedTarget();
-        }
+        // Vite can auto-increment when the requested port is busy.
+        // Always re-resolve from the bound server address after listen().
+        resolvedPort = null;
+        updateResolvedTarget();
         runSetupOnce();
         return result;
       };
