@@ -1,7 +1,13 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import viteCaddyTlsPlugin from './index.js';
-import { addRoute, addTlsPolicy, removeRoute, removeTlsPolicy } from './utils.js';
+import {
+  addRoute,
+  addTlsPolicy,
+  cleanupStaleRoutesForDomains,
+  removeRoute,
+  removeTlsPolicy,
+} from './utils.js';
 
 function execSyncMock(command: string) {
   if (command.includes('--show-toplevel')) return '/tmp/my-repo';
@@ -17,12 +23,12 @@ vi.mock('node:child_process', () => ({
 }));
 
 vi.mock('./utils.js', () => ({
+  DEFAULT_CADDY_API_URL: 'http://localhost:2019',
   validateCaddyIsInstalled: vi.fn(() => true),
-  isCaddyRunning: vi.fn(() => Promise.resolve(true)),
-  startCaddy: vi.fn(() => Promise.resolve(true)),
-  ensureBaseConfig: vi.fn(() => Promise.resolve()),
+  ensureCaddyReady: vi.fn(() => Promise.resolve()),
   addRoute: vi.fn(() => Promise.resolve()),
   addTlsPolicy: vi.fn(() => Promise.resolve()),
+  cleanupStaleRoutesForDomains: vi.fn(() => Promise.resolve()),
   removeRoute: vi.fn(() => Promise.resolve(true)),
   removeTlsPolicy: vi.fn(() => Promise.resolve(true)),
 }));
@@ -120,8 +126,8 @@ describe('viteCaddyTlsPlugin', () => {
     process.emit('SIGTERM');
     await flushPromises();
 
-    expect(removeRoute).toHaveBeenCalledWith(routeId);
-    expect(removeTlsPolicy).toHaveBeenCalledWith(tlsPolicyId);
+    expect(removeRoute).toHaveBeenCalledWith(routeId, 'http://localhost:2019');
+    expect(removeTlsPolicy).toHaveBeenCalledWith(tlsPolicyId, 'http://localhost:2019');
     expect(killSpy).toHaveBeenCalledWith(process.pid, 'SIGTERM');
   });
 
@@ -134,10 +140,6 @@ describe('viteCaddyTlsPlugin', () => {
       .spyOn(process, 'kill')
       .mockImplementation(() => true);
     const removeRouteMock = vi.mocked(removeRoute);
-    removeRouteMock
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(true);
 
     plugin.configureServer({
       httpServer,
@@ -148,6 +150,11 @@ describe('viteCaddyTlsPlugin', () => {
     httpServer.emit('listening');
     await flushPromises();
     await flushPromises();
+    removeRouteMock.mockReset();
+    removeRouteMock
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
 
     process.emit('SIGTERM');
     await flushPromises();
@@ -201,6 +208,31 @@ describe('viteCaddyTlsPlugin', () => {
     expect(addRoute).toHaveBeenCalledTimes(1);
     const domains = vi.mocked(addRoute).mock.calls[0][1];
     expect(domains).toEqual(['explicit.localhost']);
+  });
+
+  it('cleans stale vite-proxy routes for matching domains before add', async () => {
+    const httpServer = createHttpServer(4013);
+    const plugin = viteCaddyTlsPlugin({
+      domain: 'stale.localhost',
+    }) as any;
+
+    plugin.configureServer({
+      httpServer,
+      config: { server: { port: 5173 } },
+    });
+
+    httpServer.listening = true;
+    httpServer.emit('listening');
+    await flushPromises();
+    await flushPromises();
+
+    const routeId = vi.mocked(addRoute).mock.calls[0][0];
+    expect(cleanupStaleRoutesForDomains).toHaveBeenCalledWith(
+      ['stale.localhost'],
+      routeId,
+      undefined,
+      'http://localhost:2019',
+    );
   });
 
   it('normalizes explicit domains', async () => {
@@ -260,6 +292,61 @@ describe('viteCaddyTlsPlugin', () => {
     expect(addRoute).toHaveBeenCalledTimes(1);
     const domains = vi.mocked(addRoute).mock.calls[0][1];
     expect(domains).toEqual(['my-repo.feature-test.localhost']);
+  });
+
+  it('appends instanceLabel to derived domains', async () => {
+    const httpServer = createHttpServer(4006);
+    const plugin = viteCaddyTlsPlugin({
+      instanceLabel: 'web-1',
+    }) as any;
+
+    plugin.configureServer({
+      httpServer,
+      config: { server: { port: 5173 } },
+    });
+
+    httpServer.listening = true;
+    httpServer.emit('listening');
+    await flushPromises();
+    await flushPromises();
+
+    const domains = vi.mocked(addRoute).mock.calls[0][1];
+    expect(domains).toEqual(['my-repo.feature-test.web-1.localhost']);
+  });
+
+  it('reuses deterministic route ids for the same instance key', async () => {
+    const firstServer = createHttpServer(4007);
+    const secondServer = createHttpServer(4008);
+    const firstPlugin = viteCaddyTlsPlugin({
+      domain: 'stable.localhost',
+    }) as any;
+    const secondPlugin = viteCaddyTlsPlugin({
+      domain: 'stable.localhost',
+    }) as any;
+
+    firstPlugin.configureServer({
+      httpServer: firstServer,
+      config: { server: { port: 5173 }, root: '/tmp/app' },
+    });
+    secondPlugin.configureServer({
+      httpServer: secondServer,
+      config: { server: { port: 5174 }, root: '/tmp/app' },
+    });
+
+    firstServer.listening = true;
+    secondServer.listening = true;
+    firstServer.emit('listening');
+    secondServer.emit('listening');
+    await flushPromises();
+    await flushPromises();
+
+    const firstRouteId = vi.mocked(addRoute).mock.calls[0][0];
+    const secondRouteId = vi.mocked(addRoute).mock.calls[1][0];
+    expect(firstRouteId).toBe(secondRouteId);
+    expect(vi.mocked(removeRoute)).toHaveBeenCalledWith(
+      firstRouteId,
+      'http://localhost:2019',
+    );
   });
 
   it('normalizes baseDomain input', async () => {
@@ -344,6 +431,29 @@ describe('viteCaddyTlsPlugin', () => {
     const call = vi.mocked(addRoute).mock.calls[0];
     expect(call[1]).toEqual(['preview.localhost']);
     expect(call[2]).toBe(4173);
+  });
+
+  it('uses caddyApiUrl per plugin instance', async () => {
+    const httpServer = createHttpServer(4174);
+    const plugin = viteCaddyTlsPlugin({
+      domain: 'api-url.localhost',
+      caddyApiUrl: 'http://localhost:2020/',
+    }) as any;
+
+    plugin.configureServer({
+      httpServer,
+      config: { server: { port: 4174 } },
+    });
+
+    httpServer.listening = true;
+    httpServer.emit('listening');
+    await flushPromises();
+    await flushPromises();
+
+    const routeCall = vi.mocked(addRoute).mock.calls[0];
+    expect(routeCall[7]).toBe('http://localhost:2020');
+    const routeId = routeCall[0];
+    expect(vi.mocked(removeRoute)).toHaveBeenCalledWith(routeId, 'http://localhost:2020');
   });
 
   it('prefers resolved URLs when available', async () => {

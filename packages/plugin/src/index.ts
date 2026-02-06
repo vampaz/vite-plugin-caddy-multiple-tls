@@ -1,17 +1,15 @@
 import type { PluginOption, PreviewServer, ResolvedConfig, ViteDevServer } from 'vite';
 import { execSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import {
   validateCaddyIsInstalled,
-  isCaddyRunning,
-  startCaddy,
-  ensureBaseConfig,
+  ensureCaddyReady,
   addRoute,
   addTlsPolicy,
+  cleanupStaleRoutesForDomains,
   removeRoute,
   removeTlsPolicy,
-  getCaddyApiUrl,
-  setCaddyApiUrl,
   DEFAULT_CADDY_API_URL,
 } from './utils.js';
 
@@ -26,6 +24,8 @@ export interface ViteCaddyTlsPluginOptions {
   repo?: string;
   /** Override branch name used in derived domains */
   branch?: string;
+  /** Extra unique label appended after branch in derived domains */
+  instanceLabel?: string;
   cors?: string;
   /** Override the default Caddy server name (srv0) */
   serverName?: string;
@@ -140,7 +140,14 @@ function buildDerivedDomain(options: ViteCaddyTlsPluginOptions) {
 
   if (!repoLabel || !branchLabel) return null;
 
-  return `${repoLabel}.${branchLabel}.${baseDomain}`;
+  const labels = [repoLabel, branchLabel];
+  if (options.instanceLabel !== undefined) {
+    const instanceLabel = sanitizeDomainLabel(options.instanceLabel);
+    if (!instanceLabel) return null;
+    labels.push(instanceLabel);
+  }
+
+  return `${labels.join('.')}.${baseDomain}`;
 }
 
 function normalizeDomain(domain: string) {
@@ -193,6 +200,7 @@ export default function viteCaddyTlsPlugin(
     loopbackDomain,
     repo,
     branch,
+    instanceLabel,
     cors,
     serverName,
     caddyApiUrl,
@@ -200,16 +208,22 @@ export default function viteCaddyTlsPlugin(
     upstreamHostHeader,
   }: ViteCaddyTlsPluginOptions = {},
 ): PluginOption {
-  if (caddyApiUrl !== undefined) {
-    const normalizedApiUrl = normalizeCaddyApiUrl(caddyApiUrl);
-    if (normalizedApiUrl) {
-      setCaddyApiUrl(normalizedApiUrl);
-    } else {
-      setCaddyApiUrl(DEFAULT_CADDY_API_URL);
-      console.warn(
-        `caddyApiUrl is empty after trimming. Falling back to ${DEFAULT_CADDY_API_URL}.`,
-      );
-    }
+  const normalizedApiUrl = caddyApiUrl ? normalizeCaddyApiUrl(caddyApiUrl) : null;
+  const pluginCaddyApiUrl = normalizedApiUrl ?? DEFAULT_CADDY_API_URL;
+  if (caddyApiUrl !== undefined && !normalizedApiUrl) {
+    console.warn(
+      `caddyApiUrl is empty after trimming. Falling back to ${DEFAULT_CADDY_API_URL}.`,
+    );
+  }
+
+  function getInstanceKey(domains: string[], configRoot?: string) {
+    const keyMaterial = JSON.stringify({
+      domains: [...domains].sort(),
+      cwd: process.cwd(),
+      root: configRoot ?? null,
+    });
+
+    return createHash('sha1').update(keyMaterial).digest('hex').slice(0, 12);
   }
 
   function isPreviewServer(server: ViteDevServer | PreviewServer) {
@@ -253,9 +267,10 @@ export default function viteCaddyTlsPlugin(
       loopbackDomain,
       repo,
       branch,
+      instanceLabel,
     });
     const domainArray = resolvedDomains ?? [];
-    const routeId = `vite-proxy-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const routeId = `vite-proxy-${getInstanceKey(domainArray, config.root)}`;
     const shouldUseInternalTls =
       internalTls ??
       (baseDomain !== undefined || loopbackDomain !== undefined || domain !== undefined);
@@ -272,6 +287,9 @@ export default function viteCaddyTlsPlugin(
       }
       if (baseDomain !== undefined && !normalizeBaseDomain(baseDomain)) {
         issues.push('`baseDomain` is empty after trimming');
+      }
+      if (instanceLabel !== undefined && !sanitizeDomainLabel(instanceLabel)) {
+        issues.push('`instanceLabel` is empty after sanitization');
       }
 
       const info = getGitRepoInfo();
@@ -387,9 +405,12 @@ export default function viteCaddyTlsPlugin(
       if (cleanupStarted) return;
       cleanupStarted = true;
       if (tlsPolicyId) {
-        await removeWithRetry(() => removeTlsPolicy(tlsPolicyId), 'TLS policy');
+        await removeWithRetry(
+          () => removeTlsPolicy(tlsPolicyId, pluginCaddyApiUrl),
+          'TLS policy',
+        );
       }
-      await removeWithRetry(() => removeRoute(routeId), 'route');
+      await removeWithRetry(() => removeRoute(routeId, pluginCaddyApiUrl), 'route');
     }
 
     function onServerClose() {
@@ -448,22 +469,12 @@ export default function viteCaddyTlsPlugin(
         return;
       }
 
-      // 1. Ensure Caddy is running
-      let running = await isCaddyRunning();
-      if (!running) {
-        running = await startCaddy();
-        if (!running) {
-          console.error('Failed to start Caddy server.');
-          return;
-        }
-      }
-
-      // 2. Ensure base configuration exists
+      // 1. Ensure Caddy is running and base config exists
       try {
-        await ensureBaseConfig(serverName);
+        await ensureCaddyReady(serverName, pluginCaddyApiUrl);
       } catch (e) {
         console.error(
-          `Failed to configure Caddy base settings. Is the Caddy Admin API reachable at ${getCaddyApiUrl()}?`,
+          `Failed to configure Caddy base settings. Is the Caddy Admin API reachable at ${pluginCaddyApiUrl}?`,
           e,
         );
         return;
@@ -472,14 +483,22 @@ export default function viteCaddyTlsPlugin(
       const port = getServerPort();
       const upstreamHost = getUpstreamHost();
 
-      // 3. Add the specific route for this app
+      // 2. Replace stale config and add the specific route for this app
+      await cleanupStaleRoutesForDomains(
+        domainArray,
+        routeId,
+        serverName,
+        pluginCaddyApiUrl,
+      );
+      await removeRoute(routeId, pluginCaddyApiUrl);
       if (tlsPolicyId) {
+        await removeTlsPolicy(tlsPolicyId, pluginCaddyApiUrl);
         try {
-          await addTlsPolicy(tlsPolicyId, domainArray);
+          await addTlsPolicy(tlsPolicyId, domainArray, pluginCaddyApiUrl);
           tlsPolicyAdded = true;
         } catch (e) {
           console.error(
-            `Failed to add TLS policy to Caddy. Is the Caddy Admin API reachable at ${getCaddyApiUrl()}?`,
+            `Failed to add TLS policy to Caddy. Is the Caddy Admin API reachable at ${pluginCaddyApiUrl}?`,
             e,
           );
           return;
@@ -495,13 +514,14 @@ export default function viteCaddyTlsPlugin(
           serverName,
           upstreamHost,
           upstreamHostHeader,
+          pluginCaddyApiUrl,
         );
       } catch (e) {
         if (tlsPolicyAdded && tlsPolicyId) {
-          await removeTlsPolicy(tlsPolicyId);
+          await removeTlsPolicy(tlsPolicyId, pluginCaddyApiUrl);
         }
         console.error(
-          `Failed to add route to Caddy. Is the Caddy Admin API reachable at ${getCaddyApiUrl()}?`,
+          `Failed to add route to Caddy. Is the Caddy Admin API reachable at ${pluginCaddyApiUrl}?`,
           e,
         );
         return;
@@ -575,6 +595,7 @@ export default function viteCaddyTlsPlugin(
         loopbackDomain,
         repo,
         branch,
+        instanceLabel,
       });
       const defaultHmrDomain = resolvedDomains?.[0];
       const hmrConfig =

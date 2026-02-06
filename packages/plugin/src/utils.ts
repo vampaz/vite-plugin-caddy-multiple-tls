@@ -1,16 +1,11 @@
 import { execSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { open, unlink } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 const DEFAULT_SERVER_NAME = 'srv0';
 export const DEFAULT_CADDY_API_URL = 'http://localhost:2019';
-let caddyApiUrl = DEFAULT_CADDY_API_URL;
-
-export function setCaddyApiUrl(url: string) {
-  caddyApiUrl = url;
-}
-
-export function getCaddyApiUrl() {
-  return caddyApiUrl;
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -29,6 +24,48 @@ function isTlsPolicyOverlapError(text: string) {
   return text.includes('cannot apply more than one automation policy to host');
 }
 
+function getApiUrl(apiUrl?: string) {
+  return apiUrl ?? DEFAULT_CADDY_API_URL;
+}
+
+function getLockPath(apiUrl?: string) {
+  const key = createHash('sha1').update(getApiUrl(apiUrl)).digest('hex').slice(0, 12);
+  return path.join(os.tmpdir(), `vite-plugin-caddy-multiple-tls-${key}.lock`);
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withApiLock(apiUrl: string | undefined, fn: () => Promise<void>) {
+  const lockPath = getLockPath(apiUrl);
+  const startedAt = Date.now();
+  const timeoutMs = 5000;
+
+  while (true) {
+    try {
+      const handle = await open(lockPath, 'wx');
+      try {
+        await fn();
+      } finally {
+        await handle.close();
+        await unlink(lockPath).catch(() => undefined);
+      }
+      return;
+    } catch (e) {
+      if ((e as { code?: string }).code !== 'EEXIST') {
+        throw e;
+      }
+      if (Date.now() - startedAt >= timeoutMs) {
+        // Keep forward progress even if a stale lock remains from a crashed process.
+        await fn();
+        return;
+      }
+      await sleep(50);
+    }
+  }
+}
+
 /**
  * Checks if caddy cli is installed
  */
@@ -45,9 +82,9 @@ export function validateCaddyIsInstalled() {
 /**
  * Checks if Caddy is running by pinging the admin API
  */
-export async function isCaddyRunning(): Promise<boolean> {
+export async function isCaddyRunning(apiUrl?: string): Promise<boolean> {
   try {
-    const res = await fetch(`${caddyApiUrl}/config/`);
+    const res = await fetch(`${getApiUrl(apiUrl)}/config/`);
     return res.ok;
   } catch (e) {
     return false;
@@ -57,28 +94,29 @@ export async function isCaddyRunning(): Promise<boolean> {
 /**
  * Starts Caddy in the background
  */
-export async function startCaddy() {
+export async function startCaddy(apiUrl?: string) {
   // console.log("Starting Caddy in the background...");
   try {
     execSync('caddy start', { stdio: 'ignore' });
-    // Wait a bit for it to come up
-    for (let i = 0; i < 10; i++) {
-      if (await isCaddyRunning()) return true;
-      await new Promise((r) => setTimeout(r, 500));
-    }
-    return false;
   } catch (e) {
-    console.error('Failed to start Caddy:', e);
-    return false;
+    // Another process may have started Caddy concurrently.
   }
+
+  // Wait a bit for it to come up
+  for (let i = 0; i < 10; i++) {
+    if (await isCaddyRunning(apiUrl)) return true;
+    await sleep(500);
+  }
+  return false;
 }
 
 /**
  * Ensures the base HTTP app and server structure exists in Caddy
  */
-export async function ensureBaseConfig(serverName = DEFAULT_SERVER_NAME) {
+export async function ensureBaseConfig(serverName = DEFAULT_SERVER_NAME, apiUrl?: string) {
+  const resolvedApiUrl = getApiUrl(apiUrl);
   // Check if server exists
-  const serverUrl = `${caddyApiUrl}/config/apps/http/servers/${serverName}`;
+  const serverUrl = `${resolvedApiUrl}/config/apps/http/servers/${serverName}`;
   const res = await fetch(serverUrl);
   if (res.ok) return;
 
@@ -93,7 +131,7 @@ export async function ensureBaseConfig(serverName = DEFAULT_SERVER_NAME) {
     },
   };
 
-  const configRes = await fetch(`${caddyApiUrl}/config/`);
+  const configRes = await fetch(`${resolvedApiUrl}/config/`);
   if (!configRes.ok) {
     const text = await configRes.text();
     throw new Error(`Failed to read Caddy config: ${text}`);
@@ -112,7 +150,7 @@ export async function ensureBaseConfig(serverName = DEFAULT_SERVER_NAME) {
     (isRecord(config) && Object.keys(config).length === 0);
 
   if (isEmptyConfig) {
-    const loadRes = await fetch(`${caddyApiUrl}/load`, {
+    const loadRes = await fetch(`${resolvedApiUrl}/load`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -137,7 +175,7 @@ export async function ensureBaseConfig(serverName = DEFAULT_SERVER_NAME) {
   let hasServers = isRecord(servers);
 
   if (!hasApps) {
-    const createAppsRes = await fetch(`${caddyApiUrl}/config/apps`, {
+    const createAppsRes = await fetch(`${resolvedApiUrl}/config/apps`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
@@ -150,7 +188,7 @@ export async function ensureBaseConfig(serverName = DEFAULT_SERVER_NAME) {
   }
 
   if (!hasHttp) {
-    const createHttpRes = await fetch(`${caddyApiUrl}/config/apps/http`, {
+    const createHttpRes = await fetch(`${resolvedApiUrl}/config/apps/http`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ servers: {} }),
@@ -164,7 +202,7 @@ export async function ensureBaseConfig(serverName = DEFAULT_SERVER_NAME) {
   }
 
   if (!hasServers) {
-    const createServersRes = await fetch(`${caddyApiUrl}/config/apps/http/servers`, {
+    const createServersRes = await fetch(`${resolvedApiUrl}/config/apps/http/servers`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
@@ -187,8 +225,9 @@ export async function ensureBaseConfig(serverName = DEFAULT_SERVER_NAME) {
   }
 }
 
-async function ensureTlsAutomation() {
-  const policiesUrl = `${caddyApiUrl}/config/apps/tls/automation/policies`;
+async function ensureTlsAutomation(apiUrl?: string) {
+  const resolvedApiUrl = getApiUrl(apiUrl);
+  const policiesUrl = `${resolvedApiUrl}/config/apps/tls/automation/policies`;
   const policiesRes = await fetch(policiesUrl);
   if (policiesRes.ok) return;
 
@@ -202,7 +241,7 @@ async function ensureTlsAutomation() {
     );
   }
 
-  const automationRes = await fetch(`${caddyApiUrl}/config/apps/tls/automation`, {
+  const automationRes = await fetch(`${resolvedApiUrl}/config/apps/tls/automation`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ policies: [] }),
@@ -217,7 +256,7 @@ async function ensureTlsAutomation() {
     );
   }
 
-  const tlsRes = await fetch(`${caddyApiUrl}/config/apps/tls`, {
+  const tlsRes = await fetch(`${resolvedApiUrl}/config/apps/tls`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ automation: { policies: [] } }),
@@ -239,6 +278,61 @@ function formatDialAddress(host: string, port: number) {
   return `${host}:${port}`;
 }
 
+function extractMatchedHosts(route: unknown) {
+  if (!isRecord(route)) return [];
+  const match = route.match;
+  if (!Array.isArray(match)) return [];
+
+  const hosts: string[] = [];
+  for (const item of match) {
+    if (!isRecord(item) || !Array.isArray(item.host)) continue;
+    for (const host of item.host) {
+      if (typeof host === 'string') {
+        hosts.push(host);
+      }
+    }
+  }
+
+  return hosts;
+}
+
+function intersectsDomains(targetDomains: string[], routeDomains: string[]) {
+  if (targetDomains.length === 0 || routeDomains.length === 0) return false;
+  const targetSet = new Set(targetDomains);
+  return routeDomains.some((domain) => targetSet.has(domain));
+}
+
+export async function cleanupStaleRoutesForDomains(
+  domains: string[],
+  currentRouteId: string,
+  serverName = DEFAULT_SERVER_NAME,
+  apiUrl?: string,
+) {
+  if (domains.length === 0) return;
+
+  const res = await fetch(
+    `${getApiUrl(apiUrl)}/config/apps/http/servers/${serverName}/routes`,
+  );
+  if (!res.ok) return;
+
+  const text = await res.text();
+  const parsed = parseConfig(text);
+  if (!Array.isArray(parsed)) return;
+
+  for (const route of parsed) {
+    if (!isRecord(route)) continue;
+    const id = route['@id'];
+    if (typeof id !== 'string') continue;
+    if (!id.startsWith('vite-proxy-')) continue;
+    if (id === currentRouteId) continue;
+
+    const routeDomains = extractMatchedHosts(route);
+    if (!intersectsDomains(domains, routeDomains)) continue;
+
+    await removeRoute(id, apiUrl);
+  }
+}
+
 export async function addRoute(
   id: string,
   domains: string[],
@@ -247,6 +341,7 @@ export async function addRoute(
   serverName = DEFAULT_SERVER_NAME,
   upstreamHost = '127.0.0.1',
   upstreamHostHeader?: string,
+  apiUrl?: string,
 ) {
   const handlers: Array<Record<string, unknown>> = [];
   if (cors) {
@@ -302,7 +397,7 @@ export async function addRoute(
   };
 
   const res = await fetch(
-    `${caddyApiUrl}/config/apps/http/servers/${serverName}/routes`,
+    `${getApiUrl(apiUrl)}/config/apps/http/servers/${serverName}/routes`,
     {
       method: 'POST', // Append to routes list
       headers: { 'Content-Type': 'application/json' },
@@ -319,8 +414,8 @@ export async function addRoute(
 /**
  * Adds a TLS automation policy using the internal issuer for the given domains
  */
-export async function addTlsPolicy(id: string, domains: string[]) {
-  await ensureTlsAutomation();
+export async function addTlsPolicy(id: string, domains: string[], apiUrl?: string) {
+  await ensureTlsAutomation(apiUrl);
   const policy = {
     '@id': id,
     subjects: domains,
@@ -331,7 +426,7 @@ export async function addTlsPolicy(id: string, domains: string[]) {
     ],
   };
 
-  const res = await fetch(`${caddyApiUrl}/config/apps/tls/automation/policies`, {
+  const res = await fetch(`${getApiUrl(apiUrl)}/config/apps/tls/automation/policies`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(policy),
@@ -349,8 +444,8 @@ export async function addTlsPolicy(id: string, domains: string[]) {
 /**
  * Removes a route by its ID
  */
-export async function removeRoute(id: string) {
-  const res = await fetch(`${caddyApiUrl}/id/${id}`, {
+export async function removeRoute(id: string, apiUrl?: string) {
+  const res = await fetch(`${getApiUrl(apiUrl)}/id/${id}`, {
     method: 'DELETE',
   });
 
@@ -365,8 +460,8 @@ export async function removeRoute(id: string) {
 /**
  * Removes a TLS automation policy by its ID
  */
-export async function removeTlsPolicy(id: string) {
-  const res = await fetch(`${caddyApiUrl}/id/${id}`, {
+export async function removeTlsPolicy(id: string, apiUrl?: string) {
+  const res = await fetch(`${getApiUrl(apiUrl)}/id/${id}`, {
     method: 'DELETE',
   });
 
@@ -375,4 +470,19 @@ export async function removeTlsPolicy(id: string) {
     return false;
   }
   return true;
+}
+
+export async function ensureCaddyReady(serverName = DEFAULT_SERVER_NAME, apiUrl?: string) {
+  await withApiLock(apiUrl, async () => {
+    let running = await isCaddyRunning(apiUrl);
+    if (!running) {
+      running = await startCaddy(apiUrl);
+    }
+
+    if (!running) {
+      throw new Error('Failed to start Caddy server.');
+    }
+
+    await ensureBaseConfig(serverName, apiUrl);
+  });
 }

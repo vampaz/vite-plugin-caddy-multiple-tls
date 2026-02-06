@@ -92,6 +92,26 @@ export default config;
 
 You can override auto-detection with `repo` or `branch` if needed.
 
+If you run different projects that derive the same `<repo>.<branch>` host, add `instanceLabel` to keep domains unique:
+
+```js
+// vite.config.js
+import { defineConfig } from 'vite';
+import caddyTls from 'vite-plugin-caddy-multiple-tls';
+
+const config = defineConfig({
+  plugins: [
+    caddyTls({
+      instanceLabel: 'web-1',
+    })
+  ]
+});
+
+export default config;
+```
+
+This derives a host like `<repo>.<branch>.web-1.localhost`.
+
 For a zero-config experience, use `baseDomain: 'localhost'` (the default) so the derived domain works without editing `/etc/hosts`.
 
 `internalTls` defaults to `true` when you pass `baseDomain` or `domain`. You can override it if needed.
