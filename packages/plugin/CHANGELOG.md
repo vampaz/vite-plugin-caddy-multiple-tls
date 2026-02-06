@@ -1,5 +1,11 @@
 # vite-plugin-caddy-multiple-tls
 
+## 1.5.1
+
+### Patch Changes
+
+- Fix port routing when Vite auto-increments to a free port after the requested port is already in use.
+
 ## 1.5.0
 
 ### Minor Changes
