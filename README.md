@@ -136,6 +136,40 @@ const config = defineConfig({
 export default config;
 ```
 
+If your Caddy Admin API enforces a specific allowed origin that differs from `caddyApiUrl`, set `caddyAdminOrigin`.
+
+```js
+// vite.config.js
+import { defineConfig } from 'vite';
+import caddyTls from 'vite-plugin-caddy-multiple-tls';
+
+const config = defineConfig({
+  plugins: [
+    caddyTls({
+      caddyApiUrl: 'http://127.0.0.1:2019',
+      caddyAdminOrigin: 'http://localhost:2019',
+    })
+  ]
+});
+
+export default config;
+```
+
+## Troubleshooting
+
+### `client is not allowed to access from origin ''`
+
+This error comes from Caddy Admin API origin enforcement, not from Caddy being down.
+
+- Check `caddyApiUrl` points to the correct Admin API endpoint.
+- If Admin API expects a different origin than the API URL host, set `caddyAdminOrigin`.
+- Verify behavior directly:
+
+```bash
+curl -i http://127.0.0.1:2019/config/
+curl -i -H 'Origin: http://127.0.0.1:2019' http://127.0.0.1:2019/config/
+```
+
 > [!IMPORTANT]  
 > **Hosts file limitation:** If you use a custom domain, you must **manually** add each generated subdomain to your `/etc/hosts` file (e.g., `127.0.0.1 repo.branch.local.example.test`). System hosts files **do not support wildcards** (e.g., `*.local.example.test`), so you lose the benefit of automatic domain resolution that `localhost` provides.
 

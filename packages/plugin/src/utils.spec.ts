@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { addRoute, addTlsPolicy, ensureBaseConfig } from './utils.js';
+import {
+  addRoute,
+  addTlsPolicy,
+  CADDY_ADMIN_ORIGIN_POLICY_ERROR_MESSAGE,
+  ensureBaseConfig,
+  ensureCaddyReady,
+  isCaddyRunning,
+} from './utils.js';
 
 type FetchResponse = {
   ok: boolean;
@@ -18,6 +25,105 @@ function createResponse(options: {
     text: async () => options.text ?? '',
   };
 }
+
+function getHeader(options: RequestInit | undefined, name: string) {
+  return new Headers(options?.headers).get(name);
+}
+
+describe('isCaddyRunning', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('injects Origin from caddyApiUrl', async () => {
+    fetchMock.mockResolvedValue(createResponse({ ok: true }));
+
+    const running = await isCaddyRunning('http://127.0.0.1:2019');
+
+    expect(running).toBe(true);
+    const options = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(getHeader(options, 'Origin')).toBe('http://127.0.0.1:2019');
+  });
+
+  it('uses explicit caddyAdminOrigin when provided', async () => {
+    fetchMock.mockResolvedValue(createResponse({ ok: true }));
+
+    const running = await isCaddyRunning(
+      'http://127.0.0.1:2019',
+      'http://caddy-admin.local:2019',
+    );
+
+    expect(running).toBe(true);
+    const options = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(getHeader(options, 'Origin')).toBe('http://caddy-admin.local:2019');
+  });
+
+  it('returns false when Admin API rejects origin', async () => {
+    fetchMock.mockResolvedValue(
+      createResponse({
+        ok: false,
+        status: 403,
+        text: `{"error":"client is not allowed to access from origin ''"}`,
+      }),
+    );
+
+    const running = await isCaddyRunning();
+
+    expect(running).toBe(false);
+  });
+});
+
+describe('ensureCaddyReady', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('surfaces origin policy errors without trying to start Caddy', async () => {
+    fetchMock.mockResolvedValue(
+      createResponse({
+        ok: false,
+        status: 403,
+        text: `{"error":"client is not allowed to access from origin ''"}`,
+      }),
+    );
+
+    await expect(ensureCaddyReady('srv0')).rejects.toThrow(
+      CADDY_ADMIN_ORIGIN_POLICY_ERROR_MESSAGE,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('tries to start Caddy only after connectivity failures', async () => {
+    const connectivityError = new TypeError('fetch failed');
+    (connectivityError as TypeError & { cause?: { code: string } }).cause = {
+      code: 'ECONNREFUSED',
+    };
+
+    fetchMock
+      .mockRejectedValueOnce(connectivityError)
+      .mockResolvedValueOnce(createResponse({ ok: true }))
+      .mockResolvedValueOnce(createResponse({ ok: true }));
+
+    await expect(ensureCaddyReady('srv0')).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});
 
 describe('ensureBaseConfig', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
@@ -185,6 +291,25 @@ describe('addRoute', () => {
     }) as { headers?: { request?: { set?: Record<string, string> } } } | undefined;
 
     expect(proxy?.headers?.request?.set?.Host).toEqual(['localhost']);
+  });
+
+  it('preserves existing headers while injecting Origin', async () => {
+    fetchMock.mockResolvedValue(createResponse({ ok: true }));
+
+    await addRoute(
+      'route-1',
+      ['app.localhost'],
+      4321,
+      undefined,
+      'srv0',
+      '127.0.0.1',
+      undefined,
+      'http://127.0.0.1:2020',
+    );
+
+    const options = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(getHeader(options, 'Content-Type')).toBe('application/json');
+    expect(getHeader(options, 'Origin')).toBe('http://127.0.0.1:2020');
   });
 });
 
