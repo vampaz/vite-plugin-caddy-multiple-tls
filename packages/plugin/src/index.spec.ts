@@ -5,6 +5,7 @@ import {
   addRoute,
   addTlsPolicy,
   cleanupStaleRoutesForDomains,
+  ensureCaddyReady,
   removeRoute,
   removeTlsPolicy,
 } from './utils.js';
@@ -126,8 +127,16 @@ describe('viteCaddyTlsPlugin', () => {
     process.emit('SIGTERM');
     await flushPromises();
 
-    expect(removeRoute).toHaveBeenCalledWith(routeId, 'http://localhost:2019');
-    expect(removeTlsPolicy).toHaveBeenCalledWith(tlsPolicyId, 'http://localhost:2019');
+    expect(removeRoute).toHaveBeenCalledWith(
+      routeId,
+      'http://localhost:2019',
+      'http://localhost:2019',
+    );
+    expect(removeTlsPolicy).toHaveBeenCalledWith(
+      tlsPolicyId,
+      'http://localhost:2019',
+      'http://localhost:2019',
+    );
     expect(killSpy).toHaveBeenCalledWith(process.pid, 'SIGTERM');
   });
 
@@ -231,6 +240,7 @@ describe('viteCaddyTlsPlugin', () => {
       ['stale.localhost'],
       routeId,
       undefined,
+      'http://localhost:2019',
       'http://localhost:2019',
     );
   });
@@ -346,6 +356,7 @@ describe('viteCaddyTlsPlugin', () => {
     expect(vi.mocked(removeRoute)).toHaveBeenCalledWith(
       firstRouteId,
       'http://localhost:2019',
+      'http://localhost:2019',
     );
   });
 
@@ -452,8 +463,41 @@ describe('viteCaddyTlsPlugin', () => {
 
     const routeCall = vi.mocked(addRoute).mock.calls[0];
     expect(routeCall[7]).toBe('http://localhost:2020');
+    expect(routeCall[8]).toBe('http://localhost:2020');
     const routeId = routeCall[0];
-    expect(vi.mocked(removeRoute)).toHaveBeenCalledWith(routeId, 'http://localhost:2020');
+    expect(vi.mocked(removeRoute)).toHaveBeenCalledWith(
+      routeId,
+      'http://localhost:2020',
+      'http://localhost:2020',
+    );
+  });
+
+  it('uses caddyAdminOrigin when provided', async () => {
+    const httpServer = createHttpServer(4175);
+    const plugin = viteCaddyTlsPlugin({
+      domain: 'admin-origin.localhost',
+      caddyApiUrl: 'http://localhost:2020/',
+      caddyAdminOrigin: 'http://admin.local:2019/path',
+    }) as any;
+
+    plugin.configureServer({
+      httpServer,
+      config: { server: { port: 4175 } },
+    });
+
+    httpServer.listening = true;
+    httpServer.emit('listening');
+    await flushPromises();
+    await flushPromises();
+
+    const routeCall = vi.mocked(addRoute).mock.calls[0];
+    expect(routeCall[7]).toBe('http://localhost:2020');
+    expect(routeCall[8]).toBe('http://admin.local:2019');
+    expect(vi.mocked(ensureCaddyReady)).toHaveBeenCalledWith(
+      undefined,
+      'http://localhost:2020',
+      'http://admin.local:2019',
+    );
   });
 
   it('prefers resolved URLs when available', async () => {

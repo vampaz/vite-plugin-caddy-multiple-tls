@@ -31,6 +31,8 @@ export interface ViteCaddyTlsPluginOptions {
   serverName?: string;
   /** Override the Caddy Admin API base URL (default: http://localhost:2019) */
   caddyApiUrl?: string;
+  /** Override the Origin header used for Caddy Admin API requests (defaults to caddyApiUrl origin) */
+  caddyAdminOrigin?: string;
   /** Use Caddy's internal CA for the provided domains (defaults to true when baseDomain or domain is set) */
   internalTls?: boolean;
   /**
@@ -171,6 +173,16 @@ function normalizeCaddyApiUrl(url: string) {
   return trimmed.replace(/\/+$/g, '');
 }
 
+function normalizeCaddyAdminOrigin(origin: string) {
+  const trimmed = origin.trim();
+  if (!trimmed) return null;
+  try {
+    return new URL(trimmed).origin;
+  } catch (e) {
+    return null;
+  }
+}
+
 function resolveDomains(options: ViteCaddyTlsPluginOptions) {
   if (options.domain) {
     return normalizeDomains(options.domain);
@@ -204,15 +216,25 @@ export default function viteCaddyTlsPlugin(
     cors,
     serverName,
     caddyApiUrl,
+    caddyAdminOrigin,
     internalTls,
     upstreamHostHeader,
   }: ViteCaddyTlsPluginOptions = {},
 ): PluginOption {
   const normalizedApiUrl = caddyApiUrl ? normalizeCaddyApiUrl(caddyApiUrl) : null;
   const pluginCaddyApiUrl = normalizedApiUrl ?? DEFAULT_CADDY_API_URL;
+  const normalizedAdminOrigin = caddyAdminOrigin
+    ? normalizeCaddyAdminOrigin(caddyAdminOrigin)
+    : null;
+  const pluginCaddyAdminOrigin = normalizedAdminOrigin ?? pluginCaddyApiUrl;
   if (caddyApiUrl !== undefined && !normalizedApiUrl) {
     console.warn(
       `caddyApiUrl is empty after trimming. Falling back to ${DEFAULT_CADDY_API_URL}.`,
+    );
+  }
+  if (caddyAdminOrigin !== undefined && !normalizedAdminOrigin) {
+    console.warn(
+      `caddyAdminOrigin is invalid. Falling back to ${pluginCaddyApiUrl}.`,
     );
   }
 
@@ -406,11 +428,14 @@ export default function viteCaddyTlsPlugin(
       cleanupStarted = true;
       if (tlsPolicyId) {
         await removeWithRetry(
-          () => removeTlsPolicy(tlsPolicyId, pluginCaddyApiUrl),
+          () => removeTlsPolicy(tlsPolicyId, pluginCaddyApiUrl, pluginCaddyAdminOrigin),
           'TLS policy',
         );
       }
-      await removeWithRetry(() => removeRoute(routeId, pluginCaddyApiUrl), 'route');
+      await removeWithRetry(
+        () => removeRoute(routeId, pluginCaddyApiUrl, pluginCaddyAdminOrigin),
+        'route',
+      );
     }
 
     function onServerClose() {
@@ -471,7 +496,7 @@ export default function viteCaddyTlsPlugin(
 
       // 1. Ensure Caddy is running and base config exists
       try {
-        await ensureCaddyReady(serverName, pluginCaddyApiUrl);
+        await ensureCaddyReady(serverName, pluginCaddyApiUrl, pluginCaddyAdminOrigin);
       } catch (e) {
         console.error(
           `Failed to configure Caddy base settings. Is the Caddy Admin API reachable at ${pluginCaddyApiUrl}?`,
@@ -489,12 +514,18 @@ export default function viteCaddyTlsPlugin(
         routeId,
         serverName,
         pluginCaddyApiUrl,
+        pluginCaddyAdminOrigin,
       );
-      await removeRoute(routeId, pluginCaddyApiUrl);
+      await removeRoute(routeId, pluginCaddyApiUrl, pluginCaddyAdminOrigin);
       if (tlsPolicyId) {
-        await removeTlsPolicy(tlsPolicyId, pluginCaddyApiUrl);
+        await removeTlsPolicy(tlsPolicyId, pluginCaddyApiUrl, pluginCaddyAdminOrigin);
         try {
-          await addTlsPolicy(tlsPolicyId, domainArray, pluginCaddyApiUrl);
+          await addTlsPolicy(
+            tlsPolicyId,
+            domainArray,
+            pluginCaddyApiUrl,
+            pluginCaddyAdminOrigin,
+          );
           tlsPolicyAdded = true;
         } catch (e) {
           console.error(
@@ -515,10 +546,11 @@ export default function viteCaddyTlsPlugin(
           upstreamHost,
           upstreamHostHeader,
           pluginCaddyApiUrl,
+          pluginCaddyAdminOrigin,
         );
       } catch (e) {
         if (tlsPolicyAdded && tlsPolicyId) {
-          await removeTlsPolicy(tlsPolicyId, pluginCaddyApiUrl);
+          await removeTlsPolicy(tlsPolicyId, pluginCaddyApiUrl, pluginCaddyAdminOrigin);
         }
         console.error(
           `Failed to add route to Caddy. Is the Caddy Admin API reachable at ${pluginCaddyApiUrl}?`,
