@@ -1,5 +1,11 @@
 # vite-plugin-caddy-multiple-tls
 
+## 1.6.1
+
+### Patch Changes
+
+- 8b84d92: Fix Caddy Admin API origin-policy regressions by injecting an Origin header on admin requests, classifying origin-policy failures clearly, and adding the optional `caddyAdminOrigin` plugin option.
+
 ## 1.6.0
 
 ### Minor Changes
