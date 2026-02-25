@@ -1,3 +1,4 @@
+import { createServer, type Server } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   addRoute,
@@ -7,6 +8,12 @@ import {
   ensureCaddyReady,
   isCaddyRunning,
 } from './utils.js';
+
+const execSyncMock = vi.hoisted(() => vi.fn());
+
+vi.mock('node:child_process', () => ({
+  execSync: execSyncMock,
+}));
 
 type FetchResponse = {
   ok: boolean;
@@ -30,10 +37,83 @@ function getHeader(options: RequestInit | undefined, name: string) {
   return new Headers(options?.headers).get(name);
 }
 
+type OriginGuardServer = {
+  apiUrl: string;
+  expectedOrigin: string;
+  close: () => Promise<void>;
+};
+
+function closeServer(server: Server) {
+  return new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function listenServer(server: Server) {
+  return new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+}
+
+async function startOriginGuardServer(
+  resolveExpectedOrigin: (port: number) => string,
+): Promise<OriginGuardServer> {
+  let expectedOrigin = '';
+  const server = createServer((request, response) => {
+    if (request.url !== '/config/') {
+      response.statusCode = 404;
+      response.end();
+      return;
+    }
+
+    const origin = request.headers.origin ?? '';
+    if (origin !== expectedOrigin) {
+      response.statusCode = 403;
+      response.setHeader('Content-Type', 'application/json');
+      response.end(
+        JSON.stringify({
+          error: `client is not allowed to access from origin '${origin}'`,
+        }),
+      );
+      return;
+    }
+
+    response.statusCode = 200;
+    response.setHeader('Content-Type', 'application/json');
+    response.end('{}');
+  });
+
+  await listenServer(server);
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    throw new Error('Failed to start origin guard server');
+  }
+
+  const apiUrl = `http://127.0.0.1:${address.port}`;
+  expectedOrigin = resolveExpectedOrigin(address.port);
+
+  return {
+    apiUrl,
+    expectedOrigin,
+    close: () => closeServer(server),
+  };
+}
+
 describe('isCaddyRunning', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    execSyncMock.mockReset();
     fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
   });
@@ -85,6 +165,7 @@ describe('ensureCaddyReady', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    execSyncMock.mockReset();
     fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
   });
@@ -121,7 +202,41 @@ describe('ensureCaddyReady', () => {
       .mockResolvedValueOnce(createResponse({ ok: true }));
 
     await expect(ensureCaddyReady('srv0')).resolves.toBeUndefined();
+    expect(execSyncMock).toHaveBeenCalledWith('caddy start', { stdio: 'ignore' });
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('origin enforcement integration', () => {
+  let guardServer: OriginGuardServer | null;
+
+  beforeEach(() => {
+    execSyncMock.mockReset();
+    guardServer = null;
+  });
+
+  afterEach(async () => {
+    if (!guardServer) return;
+    await guardServer.close();
+    guardServer = null;
+  });
+
+  it('transitions from denied to allowed when helper injects expected Origin', async () => {
+    guardServer = await startOriginGuardServer((port) => {
+      return `http://localhost:${port}`;
+    });
+
+    const deniedResponse = await fetch(`${guardServer.apiUrl}/config/`);
+    expect(deniedResponse.status).toBe(403);
+
+    const withoutOverride = await isCaddyRunning(guardServer.apiUrl);
+    expect(withoutOverride).toBe(false);
+
+    const withOverride = await isCaddyRunning(
+      guardServer.apiUrl,
+      guardServer.expectedOrigin,
+    );
+    expect(withOverride).toBe(true);
   });
 });
 
@@ -129,6 +244,7 @@ describe('ensureBaseConfig', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    execSyncMock.mockReset();
     fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
   });
@@ -222,6 +338,7 @@ describe('addRoute', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    execSyncMock.mockReset();
     fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
   });
@@ -317,6 +434,7 @@ describe('addTlsPolicy', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    execSyncMock.mockReset();
     fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
   });
