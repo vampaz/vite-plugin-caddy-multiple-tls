@@ -112,6 +112,10 @@ export default config;
 
 This derives a host like `<repo>.<branch>.web-1.localhost`.
 
+The plugin now treats hostname ownership as explicit. If another live Vite server already owns the resolved domain, it will refuse takeover instead of deleting the other server's route. Use `instanceLabel`, `domain`, or stop the other server first.
+
+If a previous Vite process crashed and left stale ownership behind, the plugin will reclaim it automatically and clean up the stale Caddy route before continuing.
+
 For a zero-config experience, use `baseDomain: 'localhost'` (the default) so the derived domain works without editing `/etc/hosts`.
 
 `internalTls` defaults to `true` when you pass `baseDomain` or `domain`. You can override it if needed.
@@ -156,6 +160,14 @@ export default config;
 ```
 
 ## Troubleshooting
+
+### `Cannot claim ... another Vite server already owns this domain`
+
+This means another live dev server is already using the resolved hostname.
+
+- Stop the other server if you want this one to use the same host.
+- Add `instanceLabel` if both servers should run at the same time.
+- Pass an explicit `domain` if you want total control over the hostname.
 
 ### `client is not allowed to access from origin ''`
 

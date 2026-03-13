@@ -1,6 +1,6 @@
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { open, unlink } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -8,6 +8,12 @@ const DEFAULT_SERVER_NAME = 'srv0';
 export const DEFAULT_CADDY_API_URL = 'http://localhost:2019';
 export const CADDY_ADMIN_ORIGIN_POLICY_ERROR_MESSAGE =
   'Caddy Admin API rejected request due to origin policy. Check caddyApiUrl and admin origin settings.';
+const ROUTE_ID_PREFIX = 'vite-proxy-';
+const LOCK_TIMEOUT_MS = 5000;
+const LOCK_RETRY_MS = 50;
+const ROUTE_OWNERSHIP_VERSION = 1;
+export const ROUTE_OWNERSHIP_STALE_AFTER_MS = 30_000;
+export const ROUTE_OWNERSHIP_HEARTBEAT_INTERVAL_MS = 10_000;
 
 const CONNECTIVITY_ERROR_CODES = new Set([
   'ECONNREFUSED',
@@ -26,8 +32,106 @@ type CaddyAdminStatus =
   | { status: 'connectivity-error'; error: Error }
   | { status: 'api-error'; error: Error };
 
+export type RouteOwnershipRecord = {
+  version: 1;
+  ownerId: string;
+  pid: number;
+  cwd: string;
+  configRoot: string | null;
+  domains: string[];
+  routeId: string;
+  tlsPolicyId: string | null;
+  serverName: string;
+  caddyApiUrl: string;
+  startedAt: number;
+  lastSeenAt: number;
+};
+
+export type RouteOwnershipClaimResult =
+  | {
+      status: 'claimed';
+      currentRecord: RouteOwnershipRecord;
+    }
+  | {
+      status: 'reclaimed';
+      currentRecord: RouteOwnershipRecord;
+      previousRecord: RouteOwnershipRecord;
+    }
+  | {
+      status: 'active-conflict';
+      currentRecord: RouteOwnershipRecord;
+      existingRecord: RouteOwnershipRecord;
+    };
+
+type RouteOwnershipScope = Pick<
+  RouteOwnershipRecord,
+  'domains' | 'serverName' | 'caddyApiUrl'
+>;
+
+type RouteOwnershipReference = Pick<
+  RouteOwnershipRecord,
+  'ownerId' | 'domains' | 'serverName' | 'caddyApiUrl'
+>;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeRouteOwnershipDomains(domains: string[]) {
+  return Array.from(new Set(domains)).sort();
+}
+
+function getRouteOwnershipDirectory() {
+  return path.join(os.tmpdir(), 'vite-plugin-caddy-multiple-tls', 'owners');
+}
+
+function getRouteOwnershipPaths(scope: RouteOwnershipScope) {
+  const key = createHash('sha1')
+    .update(
+      JSON.stringify({
+        domains: normalizeRouteOwnershipDomains(scope.domains),
+        serverName: scope.serverName,
+        caddyApiUrl: scope.caddyApiUrl,
+      }),
+    )
+    .digest('hex')
+    .slice(0, 20);
+  const directory = getRouteOwnershipDirectory();
+
+  return {
+    directory,
+    recordPath: path.join(directory, `${key}.json`),
+    lockPath: path.join(directory, `${key}.lock`),
+  };
+}
+
+function isRouteOwnershipRecord(value: unknown): value is RouteOwnershipRecord {
+  if (!isRecord(value)) return false;
+  if (value.version !== ROUTE_OWNERSHIP_VERSION) return false;
+  if (typeof value.ownerId !== 'string' || !value.ownerId) return false;
+  if (typeof value.pid !== 'number' || !Number.isFinite(value.pid)) return false;
+  if (typeof value.cwd !== 'string') return false;
+  if (value.configRoot !== null && typeof value.configRoot !== 'string') return false;
+  if (!Array.isArray(value.domains) || value.domains.some((domain) => typeof domain !== 'string')) {
+    return false;
+  }
+  if (typeof value.routeId !== 'string' || !value.routeId) return false;
+  if (value.tlsPolicyId !== null && typeof value.tlsPolicyId !== 'string') return false;
+  if (typeof value.serverName !== 'string' || !value.serverName) return false;
+  if (typeof value.caddyApiUrl !== 'string' || !value.caddyApiUrl) return false;
+  if (typeof value.startedAt !== 'number' || !Number.isFinite(value.startedAt)) return false;
+  if (typeof value.lastSeenAt !== 'number' || !Number.isFinite(value.lastSeenAt)) return false;
+
+  return true;
+}
+
+function normalizeRouteOwnershipRecord(
+  record: RouteOwnershipRecord,
+): RouteOwnershipRecord {
+  return {
+    ...record,
+    domains: normalizeRouteOwnershipDomains(record.domains),
+  };
 }
 
 function parseConfig(text: string): unknown | undefined {
@@ -69,6 +173,10 @@ function buildCaddyRequestError(message: string, status: number, text: string) {
   }
 
   return new Error(`${message}: ${normalizedText}`);
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return Boolean(error) && typeof error === 'object' && 'code' in error;
 }
 
 function getErrorCode(error: unknown): string | undefined {
@@ -165,10 +273,9 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function withApiLock(apiUrl: string | undefined, fn: () => Promise<void>) {
-  const lockPath = getLockPath(apiUrl);
+async function withFileLock(lockPath: string, fn: () => Promise<void>) {
+  await mkdir(path.dirname(lockPath), { recursive: true });
   const startedAt = Date.now();
-  const timeoutMs = 5000;
 
   while (true) {
     try {
@@ -181,17 +288,167 @@ async function withApiLock(apiUrl: string | undefined, fn: () => Promise<void>) 
       }
       return;
     } catch (e) {
-      if ((e as { code?: string }).code !== 'EEXIST') {
+      if (!isNodeError(e) || e.code !== 'EEXIST') {
         throw e;
       }
-      if (Date.now() - startedAt >= timeoutMs) {
+      if (Date.now() - startedAt >= LOCK_TIMEOUT_MS) {
         // Keep forward progress even if a stale lock remains from a crashed process.
         await fn();
         return;
       }
-      await sleep(50);
+      await sleep(LOCK_RETRY_MS);
     }
   }
+}
+
+async function withApiLock(apiUrl: string | undefined, fn: () => Promise<void>) {
+  await withFileLock(getLockPath(apiUrl), fn);
+}
+
+async function readRouteOwnershipByPath(recordPath: string) {
+  try {
+    const text = await readFile(recordPath, 'utf8');
+    const parsed = parseConfig(text);
+    if (!isRouteOwnershipRecord(parsed)) return null;
+    return normalizeRouteOwnershipRecord(parsed);
+  } catch (e) {
+    if (isNodeError(e) && e.code === 'ENOENT') {
+      return null;
+    }
+    throw e;
+  }
+}
+
+async function writeRouteOwnership(record: RouteOwnershipRecord) {
+  const normalizedRecord = normalizeRouteOwnershipRecord(record);
+  const { directory, recordPath } = getRouteOwnershipPaths(normalizedRecord);
+  const tempPath = path.join(
+    directory,
+    `${path.basename(recordPath)}.${process.pid}.${Date.now()}.tmp`,
+  );
+  await mkdir(directory, { recursive: true });
+  await writeFile(tempPath, JSON.stringify(normalizedRecord), 'utf8');
+  await rename(tempPath, recordPath);
+}
+
+function isProcessAlive(pid: number) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return isNodeError(e) && e.code === 'EPERM';
+  }
+}
+
+export function isRouteOwnershipActive(
+  record: RouteOwnershipRecord,
+  now = Date.now(),
+) {
+  return (
+    isProcessAlive(record.pid) ||
+    now - record.lastSeenAt <= ROUTE_OWNERSHIP_STALE_AFTER_MS
+  );
+}
+
+export async function readRouteOwnership(scope: RouteOwnershipScope) {
+  const { recordPath } = getRouteOwnershipPaths(scope);
+  return readRouteOwnershipByPath(recordPath);
+}
+
+export async function claimRouteOwnership(
+  record: RouteOwnershipRecord,
+): Promise<RouteOwnershipClaimResult> {
+  const normalizedRecord = normalizeRouteOwnershipRecord(record);
+  const { lockPath, recordPath } = getRouteOwnershipPaths(normalizedRecord);
+  let claimResult: RouteOwnershipClaimResult | null = null;
+
+  await withFileLock(lockPath, async () => {
+    const existingRecord = await readRouteOwnershipByPath(recordPath);
+    if (!existingRecord) {
+      await writeRouteOwnership(normalizedRecord);
+      claimResult = {
+        status: 'claimed',
+        currentRecord: normalizedRecord,
+      };
+      return;
+    }
+
+    if (existingRecord.ownerId === normalizedRecord.ownerId) {
+      await writeRouteOwnership(normalizedRecord);
+      claimResult = {
+        status: 'claimed',
+        currentRecord: normalizedRecord,
+      };
+      return;
+    }
+
+    if (isRouteOwnershipActive(existingRecord)) {
+      claimResult = {
+        status: 'active-conflict',
+        currentRecord: normalizedRecord,
+        existingRecord,
+      };
+      return;
+    }
+
+    await writeRouteOwnership(normalizedRecord);
+    claimResult = {
+      status: 'reclaimed',
+      currentRecord: normalizedRecord,
+      previousRecord: existingRecord,
+    };
+  });
+
+  if (!claimResult) {
+    throw new Error('Failed to claim route ownership.');
+  }
+
+  return claimResult;
+}
+
+export async function touchRouteOwnership(reference: RouteOwnershipReference) {
+  const { lockPath, recordPath } = getRouteOwnershipPaths(reference);
+  let touched = false;
+
+  await withFileLock(lockPath, async () => {
+    const existingRecord = await readRouteOwnershipByPath(recordPath);
+    if (!existingRecord || existingRecord.ownerId !== reference.ownerId) {
+      return;
+    }
+
+    await writeRouteOwnership({
+      ...existingRecord,
+      lastSeenAt: Date.now(),
+    });
+    touched = true;
+  });
+
+  return touched;
+}
+
+export async function releaseRouteOwnership(reference: RouteOwnershipReference) {
+  const { lockPath, recordPath } = getRouteOwnershipPaths(reference);
+  let released = false;
+
+  await withFileLock(lockPath, async () => {
+    const existingRecord = await readRouteOwnershipByPath(recordPath);
+    if (!existingRecord || existingRecord.ownerId !== reference.ownerId) {
+      return;
+    }
+
+    await unlink(recordPath).catch((error) => {
+      if (!isNodeError(error) || error.code !== 'ENOENT') {
+        throw error;
+      }
+    });
+    released = true;
+  });
+
+  return released;
+}
+
+export function getRouteOwnershipBaseDirectory() {
+  return getRouteOwnershipDirectory();
 }
 
 /**
@@ -505,20 +762,32 @@ function extractMatchedHosts(route: unknown) {
   return hosts;
 }
 
+function extractMatchedSubjects(policy: unknown) {
+  if (!isRecord(policy) || !Array.isArray(policy.subjects)) return [];
+
+  const subjects: string[] = [];
+  for (const subject of policy.subjects) {
+    if (typeof subject === 'string') {
+      subjects.push(subject);
+    }
+  }
+
+  return subjects;
+}
+
 function intersectsDomains(targetDomains: string[], routeDomains: string[]) {
   if (targetDomains.length === 0 || routeDomains.length === 0) return false;
   const targetSet = new Set(targetDomains);
   return routeDomains.some((domain) => targetSet.has(domain));
 }
 
-export async function cleanupStaleRoutesForDomains(
+export async function findManagedRoutesForDomains(
   domains: string[],
-  currentRouteId: string,
   serverName = DEFAULT_SERVER_NAME,
   apiUrl?: string,
   adminOrigin?: string,
 ) {
-  if (domains.length === 0) return;
+  if (domains.length === 0) return [];
 
   const res = await caddyFetch(
     `${getApiUrl(apiUrl)}/config/apps/http/servers/${serverName}/routes`,
@@ -526,24 +795,63 @@ export async function cleanupStaleRoutesForDomains(
     apiUrl,
     adminOrigin,
   );
-  if (!res.ok) return;
+  if (!res.ok) return [];
 
   const text = await res.text();
   const parsed = parseConfig(text);
-  if (!Array.isArray(parsed)) return;
+  if (!Array.isArray(parsed)) return [];
+
+  const routeIds: string[] = [];
 
   for (const route of parsed) {
     if (!isRecord(route)) continue;
     const id = route['@id'];
     if (typeof id !== 'string') continue;
-    if (!id.startsWith('vite-proxy-')) continue;
-    if (id === currentRouteId) continue;
+    if (!id.startsWith(ROUTE_ID_PREFIX)) continue;
 
     const routeDomains = extractMatchedHosts(route);
     if (!intersectsDomains(domains, routeDomains)) continue;
 
-    await removeRoute(id, apiUrl, adminOrigin);
+    routeIds.push(id);
   }
+
+  return routeIds;
+}
+
+export async function findManagedTlsPoliciesForDomains(
+  domains: string[],
+  apiUrl?: string,
+  adminOrigin?: string,
+) {
+  if (domains.length === 0) return [];
+
+  const res = await caddyFetch(
+    `${getApiUrl(apiUrl)}/config/apps/tls/automation/policies`,
+    undefined,
+    apiUrl,
+    adminOrigin,
+  );
+  if (!res.ok) return [];
+
+  const text = await res.text();
+  const parsed = parseConfig(text);
+  if (!Array.isArray(parsed)) return [];
+
+  const policyIds: string[] = [];
+
+  for (const policy of parsed) {
+    if (!isRecord(policy)) continue;
+    const id = policy['@id'];
+    if (typeof id !== 'string') continue;
+    if (!id.startsWith(ROUTE_ID_PREFIX)) continue;
+
+    const policyDomains = extractMatchedSubjects(policy);
+    if (!intersectsDomains(domains, policyDomains)) continue;
+
+    policyIds.push(id);
+  }
+
+  return policyIds;
 }
 
 export async function addRoute(

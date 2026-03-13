@@ -1,16 +1,23 @@
 import type { PluginOption, PreviewServer, ResolvedConfig, ViteDevServer } from 'vite';
 import { execSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import {
   validateCaddyIsInstalled,
   ensureCaddyReady,
   addRoute,
   addTlsPolicy,
-  cleanupStaleRoutesForDomains,
+  claimRouteOwnership,
+  findManagedRoutesForDomains,
+  findManagedTlsPoliciesForDomains,
   removeRoute,
+  releaseRouteOwnership,
   removeTlsPolicy,
+  ROUTE_OWNERSHIP_HEARTBEAT_INTERVAL_MS,
+  touchRouteOwnership,
   DEFAULT_CADDY_API_URL,
+  type RouteOwnershipClaimResult,
+  type RouteOwnershipRecord,
 } from './utils.js';
 
 export interface ViteCaddyTlsPluginOptions {
@@ -238,14 +245,113 @@ export default function viteCaddyTlsPlugin(
     );
   }
 
-  function getInstanceKey(domains: string[], configRoot?: string) {
-    const keyMaterial = JSON.stringify({
-      domains: [...domains].sort(),
-      cwd: process.cwd(),
-      root: configRoot ?? null,
-    });
+  function createOwnerId() {
+    return `${process.pid}-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+  }
 
-    return createHash('sha1').update(keyMaterial).digest('hex').slice(0, 12);
+  function createRouteOwnershipRecord(
+    ownerId: string,
+    domains: string[],
+    configRoot?: string,
+  ): RouteOwnershipRecord {
+    const routeId = `vite-proxy-${ownerId}`;
+    const shouldUseInternalTls =
+      internalTls ??
+      (baseDomain !== undefined || loopbackDomain !== undefined || domain !== undefined);
+    const now = Date.now();
+
+    return {
+      version: 1,
+      ownerId,
+      pid: process.pid,
+      cwd: process.cwd(),
+      configRoot: configRoot ?? null,
+      domains: [...domains],
+      routeId,
+      tlsPolicyId: shouldUseInternalTls ? `${routeId}-tls` : null,
+      serverName: serverName ?? 'srv0',
+      caddyApiUrl: pluginCaddyApiUrl,
+      startedAt: now,
+      lastSeenAt: now,
+    };
+  }
+
+  function buildOwnershipConflictMessage(
+    domains: string[],
+    existingRecord: RouteOwnershipRecord,
+  ) {
+    const ownerLocation = existingRecord.configRoot ?? existingRecord.cwd;
+    const domainLabel = domains.join(', ');
+
+    return [
+      `Cannot claim ${domainLabel}: another Vite server already owns ${domains.length > 1 ? 'these domains' : 'this domain'}.`,
+      `Existing owner pid ${existingRecord.pid} from ${ownerLocation}.`,
+      'Stop the other server first, or use `instanceLabel` or `domain` to make the hostname unique.',
+    ].join(' ');
+  }
+
+  async function releaseOwnershipRecord(record: RouteOwnershipRecord | null) {
+    if (!record) return;
+    await releaseRouteOwnership(record);
+  }
+
+  async function cleanupClaimedResources(
+    record: RouteOwnershipRecord,
+    removeWithRetry: (remover: () => Promise<boolean>, label: string) => Promise<boolean>,
+  ) {
+    let cleaned = true;
+
+    if (record.tlsPolicyId) {
+      cleaned =
+        (await removeWithRetry(
+          () =>
+            removeTlsPolicy(
+              record.tlsPolicyId,
+              pluginCaddyApiUrl,
+              pluginCaddyAdminOrigin,
+            ),
+          'TLS policy',
+        )) && cleaned;
+    }
+
+    cleaned =
+      (await removeWithRetry(
+        () => removeRoute(record.routeId, pluginCaddyApiUrl, pluginCaddyAdminOrigin),
+        'route',
+      )) && cleaned;
+
+    return cleaned;
+  }
+
+  async function cleanupManagedResources(
+    routeIds: string[],
+    tlsPolicyIds: string[],
+    removeWithRetry: (remover: () => Promise<boolean>, label: string) => Promise<boolean>,
+  ) {
+    let cleaned = true;
+
+    for (const managedTlsPolicyId of tlsPolicyIds) {
+      cleaned =
+        (await removeWithRetry(
+          () =>
+            removeTlsPolicy(
+              managedTlsPolicyId,
+              pluginCaddyApiUrl,
+              pluginCaddyAdminOrigin,
+            ),
+          `managed TLS policy ${managedTlsPolicyId}`,
+        )) && cleaned;
+    }
+
+    for (const managedRouteId of routeIds) {
+      cleaned =
+        (await removeWithRetry(
+          () => removeRoute(managedRouteId, pluginCaddyApiUrl, pluginCaddyAdminOrigin),
+          `managed route ${managedRouteId}`,
+        )) && cleaned;
+    }
+
+    return cleaned;
   }
 
   function isPreviewServer(server: ViteDevServer | PreviewServer) {
@@ -292,15 +398,16 @@ export default function viteCaddyTlsPlugin(
       instanceLabel,
     });
     const domainArray = resolvedDomains ?? [];
-    const routeId = `vite-proxy-${getInstanceKey(domainArray, config.root)}`;
-    const shouldUseInternalTls =
-      internalTls ??
-      (baseDomain !== undefined || loopbackDomain !== undefined || domain !== undefined);
-    const tlsPolicyId = shouldUseInternalTls ? `${routeId}-tls` : null;
+    const ownerId = createOwnerId();
+    const ownershipRecord = createRouteOwnershipRecord(ownerId, domainArray, config.root);
+    const routeId = ownershipRecord.routeId;
+    const tlsPolicyId = ownershipRecord.tlsPolicyId;
     let cleanupStarted = false;
     let resolvedPort: number | null = null;
     let resolvedHost: string | null = null;
     let setupStarted = false;
+    let activeOwnershipRecord: RouteOwnershipRecord | null = null;
+    let ownershipHeartbeat: NodeJS.Timeout | null = null;
 
     function buildDomainResolutionMessage() {
       const issues: string[] = [];
@@ -426,16 +533,17 @@ export default function viteCaddyTlsPlugin(
     async function cleanupRoute() {
       if (cleanupStarted) return;
       cleanupStarted = true;
-      if (tlsPolicyId) {
-        await removeWithRetry(
-          () => removeTlsPolicy(tlsPolicyId, pluginCaddyApiUrl, pluginCaddyAdminOrigin),
-          'TLS policy',
-        );
+      if (ownershipHeartbeat) {
+        clearInterval(ownershipHeartbeat);
+        ownershipHeartbeat = null;
       }
-      await removeWithRetry(
-        () => removeRoute(routeId, pluginCaddyApiUrl, pluginCaddyAdminOrigin),
-        'route',
-      );
+      if (!activeOwnershipRecord) return;
+
+      const cleaned = await cleanupClaimedResources(activeOwnershipRecord, removeWithRetry);
+      if (cleaned) {
+        await releaseOwnershipRecord(activeOwnershipRecord);
+        activeOwnershipRecord = null;
+      }
     }
 
     function onServerClose() {
@@ -489,6 +597,29 @@ export default function viteCaddyTlsPlugin(
       return false;
     }
 
+    function startOwnershipHeartbeat(record: RouteOwnershipRecord) {
+      ownershipHeartbeat = setInterval(() => {
+        void touchRouteOwnership(record)
+          .then((touched) => {
+            if (touched || !ownershipHeartbeat) {
+              return;
+            }
+
+            console.error(
+              `Lost route ownership for ${domainArray.join(', ')}. Cleaning up managed Caddy resources.`,
+            );
+            void cleanupRoute();
+          })
+          .catch((error) => {
+            console.error(
+              `Failed to refresh route ownership for ${domainArray.join(', ')}.`,
+              error,
+            );
+          });
+      }, ROUTE_OWNERSHIP_HEARTBEAT_INTERVAL_MS);
+      ownershipHeartbeat.unref?.();
+    }
+
     async function setupRoute() {
       if (!validateCaddyIsInstalled()) {
         return;
@@ -507,18 +638,83 @@ export default function viteCaddyTlsPlugin(
 
       const port = getServerPort();
       const upstreamHost = getUpstreamHost();
+      let claimResult: RouteOwnershipClaimResult;
 
-      // 2. Replace stale config and add the specific route for this app
-      await cleanupStaleRoutesForDomains(
-        domainArray,
-        routeId,
-        serverName,
-        pluginCaddyApiUrl,
-        pluginCaddyAdminOrigin,
-      );
-      await removeRoute(routeId, pluginCaddyApiUrl, pluginCaddyAdminOrigin);
+      try {
+        claimResult = await claimRouteOwnership(ownershipRecord);
+      } catch (e) {
+        console.error('Failed to claim route ownership for the resolved domains.', e);
+        return;
+      }
+
+      if (claimResult.status === 'active-conflict') {
+        console.error(
+          buildOwnershipConflictMessage(domainArray, claimResult.existingRecord),
+        );
+        return;
+      }
+
+      activeOwnershipRecord = claimResult.currentRecord;
+
+      if (claimResult.status === 'reclaimed') {
+        const reclaimed = await cleanupClaimedResources(
+          claimResult.previousRecord,
+          removeWithRetry,
+        );
+
+        if (!reclaimed) {
+          console.error(
+            `Failed to reclaim stale ownership for ${domainArray.join(', ')}. Try stopping the other server or removing stale Caddy state manually.`,
+          );
+          await releaseOwnershipRecord(activeOwnershipRecord);
+          activeOwnershipRecord = null;
+          return;
+        }
+      }
+
+      const conflictingRouteIds = (
+        await findManagedRoutesForDomains(
+          domainArray,
+          serverName,
+          pluginCaddyApiUrl,
+          pluginCaddyAdminOrigin,
+        )
+      ).filter((existingRouteId) => {
+        return existingRouteId !== routeId;
+      });
+
+      const conflictingTlsPolicyIds = (
+        await findManagedTlsPoliciesForDomains(
+          domainArray,
+          pluginCaddyApiUrl,
+          pluginCaddyAdminOrigin,
+        )
+      ).filter((existingTlsPolicyId) => {
+        return existingTlsPolicyId !== tlsPolicyId;
+      });
+
+      if (conflictingRouteIds.length > 0 || conflictingTlsPolicyIds.length > 0) {
+        const reclaimedOrphans = await cleanupManagedResources(
+          conflictingRouteIds,
+          conflictingTlsPolicyIds,
+          removeWithRetry,
+        );
+
+        if (reclaimedOrphans) {
+          console.warn(
+            `Reclaimed orphaned managed Caddy resources for ${domainArray.join(', ')}.`,
+          );
+        } else {
+          console.error(
+            `Cannot claim ${domainArray.join(', ')} because Caddy still has orphaned managed resources. Remove the stale Caddy state or use \`instanceLabel\` or \`domain\` to make the hostname unique.`,
+          );
+          await releaseOwnershipRecord(activeOwnershipRecord);
+          activeOwnershipRecord = null;
+          return;
+        }
+      }
+
       if (tlsPolicyId) {
-        await removeTlsPolicy(tlsPolicyId, pluginCaddyApiUrl, pluginCaddyAdminOrigin);
         try {
           await addTlsPolicy(
             tlsPolicyId,
@@ -532,6 +728,8 @@ export default function viteCaddyTlsPlugin(
             `Failed to add TLS policy to Caddy. Is the Caddy Admin API reachable at ${pluginCaddyApiUrl}?`,
             e,
           );
+          await releaseOwnershipRecord(activeOwnershipRecord);
+          activeOwnershipRecord = null;
           return;
         }
       }
@@ -552,11 +750,17 @@ export default function viteCaddyTlsPlugin(
         if (tlsPolicyAdded && tlsPolicyId) {
           await removeTlsPolicy(tlsPolicyId, pluginCaddyApiUrl, pluginCaddyAdminOrigin);
         }
+        await releaseOwnershipRecord(activeOwnershipRecord);
+        activeOwnershipRecord = null;
         console.error(
           `Failed to add route to Caddy. Is the Caddy Admin API reachable at ${pluginCaddyApiUrl}?`,
           e,
         );
         return;
+      }
+
+      if (activeOwnershipRecord) {
+        startOwnershipHeartbeat(activeOwnershipRecord);
       }
 
       console.log('\n🔒 Caddy is proxying your traffic on https');
