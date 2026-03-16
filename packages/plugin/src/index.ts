@@ -295,6 +295,10 @@ export default function viteCaddyTlsPlugin(
     await releaseRouteOwnership(record);
   }
 
+  async function releaseOwnershipRecords(records: RouteOwnershipRecord[]) {
+    await Promise.all(records.map((record) => releaseOwnershipRecord(record)));
+  }
+
   async function cleanupClaimedResources(
     record: RouteOwnershipRecord,
     removeWithRetry: (remover: () => Promise<boolean>, label: string) => Promise<boolean>,
@@ -657,10 +661,11 @@ export default function viteCaddyTlsPlugin(
       activeOwnershipRecord = claimResult.currentRecord;
 
       if (claimResult.status === 'reclaimed') {
-        const reclaimed = await cleanupClaimedResources(
-          claimResult.previousRecord,
-          removeWithRetry,
-        );
+        let reclaimed = true;
+        for (const previousRecord of claimResult.previousRecords) {
+          reclaimed =
+            (await cleanupClaimedResources(previousRecord, removeWithRetry)) && reclaimed;
+        }
 
         if (!reclaimed) {
           console.error(
@@ -670,6 +675,8 @@ export default function viteCaddyTlsPlugin(
           activeOwnershipRecord = null;
           return;
         }
+
+        await releaseOwnershipRecords(claimResult.previousRecords);
       }
 
       const conflictingRouteIds = (

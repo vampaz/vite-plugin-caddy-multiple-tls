@@ -434,13 +434,15 @@ describe('viteCaddyTlsPlugin', () => {
     vi.mocked(claimRouteOwnership).mockImplementationOnce(async (record) => ({
       status: 'reclaimed',
       currentRecord: record,
-      previousRecord: createClaimedRecord({
-        ownerId: 'stale-owner',
-        domains: ['reclaim.localhost'],
-        routeId: 'vite-proxy-stale-owner',
-        tlsPolicyId: 'vite-proxy-stale-owner-tls',
-        lastSeenAt: Date.now() - 60_000,
-      }),
+      previousRecords: [
+        createClaimedRecord({
+          ownerId: 'stale-owner',
+          domains: ['reclaim.localhost'],
+          routeId: 'vite-proxy-stale-owner',
+          tlsPolicyId: 'vite-proxy-stale-owner-tls',
+          lastSeenAt: Date.now() - 60_000,
+        }),
+      ],
     }));
 
     plugin.configureServer({

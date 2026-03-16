@@ -1,6 +1,6 @@
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, open, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -55,7 +55,7 @@ export type RouteOwnershipClaimResult =
   | {
       status: 'reclaimed';
       currentRecord: RouteOwnershipRecord;
-      previousRecord: RouteOwnershipRecord;
+      previousRecords: RouteOwnershipRecord[];
     }
   | {
       status: 'active-conflict';
@@ -96,12 +96,21 @@ function getRouteOwnershipPaths(scope: RouteOwnershipScope) {
     )
     .digest('hex')
     .slice(0, 20);
+  const scopeLockKey = createHash('sha1')
+    .update(
+      JSON.stringify({
+        serverName: scope.serverName,
+        caddyApiUrl: scope.caddyApiUrl,
+      }),
+    )
+    .digest('hex')
+    .slice(0, 20);
   const directory = getRouteOwnershipDirectory();
 
   return {
     directory,
     recordPath: path.join(directory, `${key}.json`),
-    lockPath: path.join(directory, `${key}.lock`),
+    lockPath: path.join(directory, `scope-${scopeLockKey}.lock`),
   };
 }
 
@@ -331,6 +340,34 @@ async function writeRouteOwnership(record: RouteOwnershipRecord) {
   await rename(tempPath, recordPath);
 }
 
+async function listRouteOwnershipRecords(scope: Pick<RouteOwnershipRecord, 'serverName' | 'caddyApiUrl'>) {
+  const directory = getRouteOwnershipDirectory();
+  let entries: string[];
+
+  try {
+    entries = await readdir(directory);
+  } catch (e) {
+    if (isNodeError(e) && e.code === 'ENOENT') {
+      return [];
+    }
+    throw e;
+  }
+
+  const records = await Promise.all(
+    entries
+      .filter((entry) => entry.endsWith('.json'))
+      .map((entry) => readRouteOwnershipByPath(path.join(directory, entry))),
+  );
+
+  return records.filter((record): record is RouteOwnershipRecord => {
+    return Boolean(
+      record &&
+        record.serverName === scope.serverName &&
+        record.caddyApiUrl === scope.caddyApiUrl,
+    );
+  });
+}
+
 function isProcessAlive(pid: number) {
   try {
     process.kill(pid, 0);
@@ -364,7 +401,7 @@ export async function claimRouteOwnership(
 
   await withFileLock(lockPath, async () => {
     const existingRecord = await readRouteOwnershipByPath(recordPath);
-    if (!existingRecord) {
+    if (existingRecord?.ownerId === normalizedRecord.ownerId) {
       await writeRouteOwnership(normalizedRecord);
       claimResult = {
         status: 'claimed',
@@ -373,29 +410,41 @@ export async function claimRouteOwnership(
       return;
     }
 
-    if (existingRecord.ownerId === normalizedRecord.ownerId) {
-      await writeRouteOwnership(normalizedRecord);
-      claimResult = {
-        status: 'claimed',
-        currentRecord: normalizedRecord,
-      };
-      return;
-    }
+    const overlappingRecords = (await listRouteOwnershipRecords(normalizedRecord)).filter(
+      (candidate) => {
+        return (
+          candidate.ownerId !== normalizedRecord.ownerId &&
+          intersectsDomains(candidate.domains, normalizedRecord.domains)
+        );
+      },
+    );
 
-    if (isRouteOwnershipActive(existingRecord)) {
+    const activeConflict = overlappingRecords.find((candidate) => {
+      return isRouteOwnershipActive(candidate);
+    });
+
+    if (activeConflict) {
       claimResult = {
         status: 'active-conflict',
         currentRecord: normalizedRecord,
-        existingRecord,
+        existingRecord: activeConflict,
       };
       return;
     }
 
     await writeRouteOwnership(normalizedRecord);
+    if (overlappingRecords.length > 0) {
+      claimResult = {
+        status: 'reclaimed',
+        currentRecord: normalizedRecord,
+        previousRecords: overlappingRecords,
+      };
+      return;
+    }
+
     claimResult = {
-      status: 'reclaimed',
+      status: 'claimed',
       currentRecord: normalizedRecord,
-      previousRecord: existingRecord,
     };
   });
 

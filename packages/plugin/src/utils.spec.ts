@@ -188,6 +188,28 @@ describe('route ownership', () => {
     });
   });
 
+  it('refuses a live conflicting owner with overlapping domains', async () => {
+    const firstRecord = createOwnershipRecord({
+      domains: ['app.localhost', 'app-2.localhost'],
+    });
+    const secondRecord = createOwnershipRecord({
+      ownerId: 'owner-2',
+      domains: ['app.localhost'],
+      routeId: 'vite-proxy-owner-2',
+    });
+
+    await claimRouteOwnership(firstRecord);
+
+    await expect(claimRouteOwnership(secondRecord)).resolves.toEqual({
+      status: 'active-conflict',
+      currentRecord: secondRecord,
+      existingRecord: {
+        ...firstRecord,
+        domains: ['app-2.localhost', 'app.localhost'],
+      },
+    });
+  });
+
   it('keeps a live pid active even when the heartbeat is stale', async () => {
     const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
       if (signal === 0 && pid === 42_424) {
@@ -236,7 +258,40 @@ describe('route ownership', () => {
     await expect(claimRouteOwnership(nextRecord)).resolves.toEqual({
       status: 'reclaimed',
       currentRecord: nextRecord,
-      previousRecord: staleRecord,
+      previousRecords: [staleRecord],
+    });
+
+    killSpy.mockRestore();
+  });
+
+  it('reclaims a stale overlapping owner record', async () => {
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw createNodeError('ESRCH');
+    });
+    const staleRecord = createOwnershipRecord({
+      ownerId: 'owner-stale',
+      pid: 99_999,
+      domains: ['app.localhost', 'app-2.localhost'],
+      routeId: 'vite-proxy-owner-stale',
+      lastSeenAt: Date.now() - 60_000,
+    });
+    const nextRecord = createOwnershipRecord({
+      ownerId: 'owner-next',
+      domains: ['app.localhost'],
+      routeId: 'vite-proxy-owner-next',
+    });
+
+    await claimRouteOwnership(staleRecord);
+
+    await expect(claimRouteOwnership(nextRecord)).resolves.toEqual({
+      status: 'reclaimed',
+      currentRecord: nextRecord,
+      previousRecords: [
+        {
+          ...staleRecord,
+          domains: ['app-2.localhost', 'app.localhost'],
+        },
+      ],
     });
 
     killSpy.mockRestore();
