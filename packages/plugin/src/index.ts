@@ -306,11 +306,12 @@ export default function viteCaddyTlsPlugin(
     let cleaned = true;
 
     if (record.tlsPolicyId) {
+      const tlsPolicyId = record.tlsPolicyId;
       cleaned =
         (await removeWithRetry(
           () =>
             removeTlsPolicy(
-              record.tlsPolicyId,
+              tlsPolicyId,
               pluginCaddyApiUrl,
               pluginCaddyAdminOrigin,
             ),
