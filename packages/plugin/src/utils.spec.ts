@@ -264,6 +264,32 @@ describe('route ownership', () => {
     killSpy.mockRestore();
   });
 
+  it('reclaims a dead owner immediately even when the heartbeat is still fresh', async () => {
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw createNodeError('ESRCH');
+    });
+    const staleRecord = createOwnershipRecord({
+      ownerId: 'owner-stale',
+      pid: 99_999,
+      routeId: 'vite-proxy-owner-stale',
+      lastSeenAt: Date.now() - 1_000,
+    });
+    const nextRecord = createOwnershipRecord({
+      ownerId: 'owner-next',
+      routeId: 'vite-proxy-owner-next',
+    });
+
+    await claimRouteOwnership(staleRecord);
+
+    await expect(claimRouteOwnership(nextRecord)).resolves.toEqual({
+      status: 'reclaimed',
+      currentRecord: nextRecord,
+      previousRecords: [staleRecord],
+    });
+
+    killSpy.mockRestore();
+  });
+
   it('reclaims a stale overlapping owner record', async () => {
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
       throw createNodeError('ESRCH');

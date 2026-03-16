@@ -555,11 +555,17 @@ export default function viteCaddyTlsPlugin(
       void cleanupRoute();
     }
 
+    function getSignalExitCode(signal: NodeJS.Signals) {
+      if (signal === 'SIGINT') return 130;
+      if (signal === 'SIGTERM') return 143;
+      return 1;
+    }
+
     function handleSignal(signal: NodeJS.Signals) {
       process.off('SIGINT', onSigint);
       process.off('SIGTERM', onSigterm);
       void cleanupRoute().finally(() => {
-        process.kill(process.pid, signal);
+        process.exit(getSignalExitCode(signal));
       });
     }
 

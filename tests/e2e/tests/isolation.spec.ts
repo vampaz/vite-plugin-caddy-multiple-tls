@@ -9,11 +9,16 @@ function resolveRepoRoot() {
 }
 
 function startCompetingServer() {
+  return startServer();
+}
+
+function startServer(envOverrides: Record<string, string> = {}) {
   const child = spawn('npm', ['run', 'dev', '--workspace', 'playground'], {
     cwd: resolveRepoRoot(),
     env: {
       ...process.env,
       FORCE_COLOR: '0',
+      ...envOverrides,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -34,10 +39,13 @@ function startCompetingServer() {
   };
 }
 
-async function stopCompetingServer(child: ChildProcessWithoutNullStreams) {
+async function stopCompetingServer(
+  child: ChildProcessWithoutNullStreams,
+  signal: NodeJS.Signals = 'SIGTERM',
+) {
   if (child.exitCode !== null) return;
 
-  child.kill('SIGTERM');
+  child.kill(signal);
   await once(child, 'exit');
 }
 
@@ -57,5 +65,35 @@ test('refuses to steal a live hostname from another dev server', async ({ page }
     ).toBeVisible();
   } finally {
     await stopCompetingServer(competingServer.child);
+  }
+});
+
+test('releases hostname ownership on SIGINT so the same domain can restart immediately', async () => {
+  const explicitDomain = 'restart.localtest.me';
+  const firstServer = startServer({
+    E2E_DOMAIN: explicitDomain,
+  });
+
+  try {
+    await expect.poll(() => {
+      return firstServer.getOutput();
+    }).toContain(`https://${explicitDomain}`);
+  } finally {
+    await stopCompetingServer(firstServer.child, 'SIGINT');
+  }
+
+  const secondServer = startServer({
+    E2E_DOMAIN: explicitDomain,
+  });
+
+  try {
+    await expect.poll(() => {
+      return secondServer.getOutput();
+    }).toContain(`https://${explicitDomain}`);
+    await expect.poll(() => {
+      return secondServer.getOutput();
+    }).not.toContain('already owns this domain');
+  } finally {
+    await stopCompetingServer(secondServer.child);
   }
 });
