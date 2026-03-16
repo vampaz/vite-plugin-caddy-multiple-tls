@@ -139,9 +139,9 @@ describe('viteCaddyTlsPlugin', () => {
       branch: 'main',
       internalTls: true,
     }) as any;
-    const killSpy = vi
-      .spyOn(process, 'kill')
-      .mockImplementation(() => true);
+    const exitSpy = vi
+      .spyOn(process, 'exit')
+      .mockImplementation((() => undefined) as never);
 
     plugin.configureServer({
       httpServer,
@@ -174,7 +174,7 @@ describe('viteCaddyTlsPlugin', () => {
         tlsPolicyId,
       }),
     );
-    expect(killSpy).toHaveBeenCalledWith(process.pid, 'SIGTERM');
+    expect(exitSpy).toHaveBeenCalledWith(143);
   });
 
   it('retries cleanup when route removal fails', async () => {
@@ -182,9 +182,9 @@ describe('viteCaddyTlsPlugin', () => {
     const plugin = viteCaddyTlsPlugin({
       domain: 'retry.localhost',
     }) as any;
-    const killSpy = vi
-      .spyOn(process, 'kill')
-      .mockImplementation(() => true);
+    const exitSpy = vi
+      .spyOn(process, 'exit')
+      .mockImplementation((() => undefined) as never);
     const removeRouteMock = vi.mocked(removeRoute);
 
     plugin.configureServer({
@@ -209,7 +209,7 @@ describe('viteCaddyTlsPlugin', () => {
 
     expect(removeRouteMock).toHaveBeenCalledTimes(3);
     expect(releaseRouteOwnership).toHaveBeenCalledTimes(1);
-    expect(killSpy).toHaveBeenCalledWith(process.pid, 'SIGTERM');
+    expect(exitSpy).toHaveBeenCalledWith(143);
   });
 
   it('adds a TLS policy when baseDomain is provided', async () => {

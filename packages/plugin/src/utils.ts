@@ -381,10 +381,11 @@ export function isRouteOwnershipActive(
   record: RouteOwnershipRecord,
   now = Date.now(),
 ) {
-  return (
-    isProcessAlive(record.pid) ||
-    now - record.lastSeenAt <= ROUTE_OWNERSHIP_STALE_AFTER_MS
-  );
+  if (isProcessAlive(record.pid)) {
+    return true;
+  }
+
+  return record.pid <= 0 && now - record.lastSeenAt <= ROUTE_OWNERSHIP_STALE_AFTER_MS;
 }
 
 export async function readRouteOwnership(scope: RouteOwnershipScope) {
