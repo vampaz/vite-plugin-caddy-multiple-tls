@@ -4,10 +4,15 @@ import viteCaddyTlsPlugin from './index.js';
 import {
   addRoute,
   addTlsPolicy,
-  cleanupStaleRoutesForDomains,
+  claimRouteOwnership,
   ensureCaddyReady,
+  findManagedRoutesForDomains,
+  findManagedTlsPoliciesForDomains,
   removeRoute,
+  releaseRouteOwnership,
   removeTlsPolicy,
+  ROUTE_OWNERSHIP_HEARTBEAT_INTERVAL_MS,
+  touchRouteOwnership,
 } from './utils.js';
 
 function execSyncMock(command: string) {
@@ -25,13 +30,21 @@ vi.mock('node:child_process', () => ({
 
 vi.mock('./utils.js', () => ({
   DEFAULT_CADDY_API_URL: 'http://localhost:2019',
+  ROUTE_OWNERSHIP_HEARTBEAT_INTERVAL_MS: 10_000,
   validateCaddyIsInstalled: vi.fn(() => true),
   ensureCaddyReady: vi.fn(() => Promise.resolve()),
   addRoute: vi.fn(() => Promise.resolve()),
   addTlsPolicy: vi.fn(() => Promise.resolve()),
-  cleanupStaleRoutesForDomains: vi.fn(() => Promise.resolve()),
+  claimRouteOwnership: vi.fn(async (record) => ({
+    status: 'claimed',
+    currentRecord: record,
+  })),
+  findManagedRoutesForDomains: vi.fn(() => Promise.resolve([])),
+  findManagedTlsPoliciesForDomains: vi.fn(() => Promise.resolve([])),
   removeRoute: vi.fn(() => Promise.resolve(true)),
+  releaseRouteOwnership: vi.fn(() => Promise.resolve(true)),
   removeTlsPolicy: vi.fn(() => Promise.resolve(true)),
+  touchRouteOwnership: vi.fn(() => Promise.resolve(true)),
 }));
 
 type Listener = (...args: unknown[]) => void;
@@ -53,6 +66,24 @@ function createHttpServer(port: number) {
 
 function flushPromises() {
   return new Promise((resolve) => setImmediate(resolve));
+}
+
+function createClaimedRecord(overrides: Record<string, unknown> = {}) {
+  return {
+    version: 1,
+    ownerId: 'owner-1',
+    pid: process.pid,
+    cwd: process.cwd(),
+    configRoot: '/tmp/app',
+    domains: ['app.localhost'],
+    routeId: 'vite-proxy-owner-1',
+    tlsPolicyId: null,
+    serverName: 'srv0',
+    caddyApiUrl: 'http://localhost:2019',
+    startedAt: Date.now(),
+    lastSeenAt: Date.now(),
+    ...overrides,
+  };
 }
 
 describe('viteCaddyTlsPlugin', () => {
@@ -137,6 +168,12 @@ describe('viteCaddyTlsPlugin', () => {
       'http://localhost:2019',
       'http://localhost:2019',
     );
+    expect(releaseRouteOwnership).toHaveBeenCalledWith(
+      expect.objectContaining({
+        routeId,
+        tlsPolicyId,
+      }),
+    );
     expect(killSpy).toHaveBeenCalledWith(process.pid, 'SIGTERM');
   });
 
@@ -171,6 +208,7 @@ describe('viteCaddyTlsPlugin', () => {
     await flushPromises();
 
     expect(removeRouteMock).toHaveBeenCalledTimes(3);
+    expect(releaseRouteOwnership).toHaveBeenCalledTimes(1);
     expect(killSpy).toHaveBeenCalledWith(process.pid, 'SIGTERM');
   });
 
@@ -219,11 +257,28 @@ describe('viteCaddyTlsPlugin', () => {
     expect(domains).toEqual(['explicit.localhost']);
   });
 
-  it('cleans stale vite-proxy routes for matching domains before add', async () => {
+  it('refuses to steal domains owned by another live server', async () => {
     const httpServer = createHttpServer(4013);
     const plugin = viteCaddyTlsPlugin({
       domain: 'stale.localhost',
     }) as any;
+    const consoleErrorSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    vi.mocked(claimRouteOwnership).mockResolvedValueOnce({
+      status: 'active-conflict',
+      currentRecord: createClaimedRecord({
+        ownerId: 'next-owner',
+        domains: ['stale.localhost'],
+        routeId: 'vite-proxy-next-owner',
+      }),
+      existingRecord: createClaimedRecord({
+        ownerId: 'active-owner',
+        pid: 4242,
+        domains: ['stale.localhost'],
+        routeId: 'vite-proxy-active-owner',
+      }),
+    });
 
     plugin.configureServer({
       httpServer,
@@ -235,13 +290,13 @@ describe('viteCaddyTlsPlugin', () => {
     await flushPromises();
     await flushPromises();
 
-    const routeId = vi.mocked(addRoute).mock.calls[0][0];
-    expect(cleanupStaleRoutesForDomains).toHaveBeenCalledWith(
-      ['stale.localhost'],
-      routeId,
-      undefined,
-      'http://localhost:2019',
-      'http://localhost:2019',
+    expect(addRoute).not.toHaveBeenCalled();
+    expect(removeRoute).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('stale.localhost'),
+    );
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('instanceLabel'),
     );
   });
 
@@ -324,7 +379,7 @@ describe('viteCaddyTlsPlugin', () => {
     expect(domains).toEqual(['my-repo.feature-test.web-1.localhost']);
   });
 
-  it('reuses deterministic route ids for the same instance key', async () => {
+  it('prevents a second live server from stealing the first server domain', async () => {
     const firstServer = createHttpServer(4007);
     const secondServer = createHttpServer(4008);
     const firstPlugin = viteCaddyTlsPlugin({
@@ -333,6 +388,20 @@ describe('viteCaddyTlsPlugin', () => {
     const secondPlugin = viteCaddyTlsPlugin({
       domain: 'stable.localhost',
     }) as any;
+    vi.mocked(claimRouteOwnership)
+      .mockImplementationOnce(async (record) => ({
+        status: 'claimed',
+        currentRecord: record,
+      }))
+      .mockImplementationOnce(async (record) => ({
+        status: 'active-conflict',
+        currentRecord: record,
+        existingRecord: createClaimedRecord({
+          ownerId: 'owner-1',
+          domains: ['stable.localhost'],
+          routeId: 'vite-proxy-owner-1',
+        }),
+      }));
 
     firstPlugin.configureServer({
       httpServer: firstServer,
@@ -350,13 +419,172 @@ describe('viteCaddyTlsPlugin', () => {
     await flushPromises();
     await flushPromises();
 
-    const firstRouteId = vi.mocked(addRoute).mock.calls[0][0];
-    const secondRouteId = vi.mocked(addRoute).mock.calls[1][0];
-    expect(firstRouteId).toBe(secondRouteId);
-    expect(vi.mocked(removeRoute)).toHaveBeenCalledWith(
-      firstRouteId,
+    expect(vi.mocked(addRoute)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(addRoute).mock.calls[0][0]).toEqual(
+      expect.stringContaining('vite-proxy-'),
+    );
+    expect(vi.mocked(removeRoute)).not.toHaveBeenCalled();
+  });
+
+  it('reclaims stale ownership before adding the new route', async () => {
+    const httpServer = createHttpServer(4014);
+    const plugin = viteCaddyTlsPlugin({
+      domain: 'reclaim.localhost',
+    }) as any;
+    vi.mocked(claimRouteOwnership).mockImplementationOnce(async (record) => ({
+      status: 'reclaimed',
+      currentRecord: record,
+      previousRecords: [
+        createClaimedRecord({
+          ownerId: 'stale-owner',
+          domains: ['reclaim.localhost'],
+          routeId: 'vite-proxy-stale-owner',
+          tlsPolicyId: 'vite-proxy-stale-owner-tls',
+          lastSeenAt: Date.now() - 60_000,
+        }),
+      ],
+    }));
+
+    plugin.configureServer({
+      httpServer,
+      config: { server: { port: 5173 } },
+    });
+
+    httpServer.listening = true;
+    httpServer.emit('listening');
+    await flushPromises();
+    await flushPromises();
+
+    expect(removeTlsPolicy).toHaveBeenCalledWith(
+      'vite-proxy-stale-owner-tls',
       'http://localhost:2019',
       'http://localhost:2019',
+    );
+    expect(removeRoute).toHaveBeenCalledWith(
+      'vite-proxy-stale-owner',
+      'http://localhost:2019',
+      'http://localhost:2019',
+    );
+    expect(addRoute).toHaveBeenCalledWith(
+      expect.stringContaining('vite-proxy-'),
+      ['reclaim.localhost'],
+      4014,
+      undefined,
+      undefined,
+      '127.0.0.1',
+      undefined,
+      'http://localhost:2019',
+      'http://localhost:2019',
+    );
+  });
+
+  it('reclaims orphaned managed caddy resources before adding the new route', async () => {
+    const httpServer = createHttpServer(4015);
+    const plugin = viteCaddyTlsPlugin({
+      domain: 'orphan.localhost',
+    }) as any;
+    vi.mocked(findManagedRoutesForDomains).mockResolvedValueOnce([
+      'vite-proxy-orphan-route',
+    ]);
+    vi.mocked(findManagedTlsPoliciesForDomains).mockResolvedValueOnce([
+      'vite-proxy-orphan-tls',
+    ]);
+    const consoleWarnSpy = vi
+      .spyOn(console, 'warn')
+      .mockImplementation(() => undefined);
+
+    plugin.configureServer({
+      httpServer,
+      config: { server: { port: 5173 } },
+    });
+
+    httpServer.listening = true;
+    httpServer.emit('listening');
+    await flushPromises();
+    await flushPromises();
+
+    expect(removeTlsPolicy).toHaveBeenCalledWith(
+      'vite-proxy-orphan-tls',
+      'http://localhost:2019',
+      'http://localhost:2019',
+    );
+    expect(removeRoute).toHaveBeenCalledWith(
+      'vite-proxy-orphan-route',
+      'http://localhost:2019',
+      'http://localhost:2019',
+    );
+    expect(addRoute).toHaveBeenCalledWith(
+      expect.stringContaining('vite-proxy-'),
+      ['orphan.localhost'],
+      4015,
+      undefined,
+      undefined,
+      '127.0.0.1',
+      undefined,
+      'http://localhost:2019',
+      'http://localhost:2019',
+    );
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      'Reclaimed orphaned managed Caddy resources for orphan.localhost.',
+    );
+  });
+
+  it('cleans up its managed resources when ownership is lost during heartbeat refresh', async () => {
+    const httpServer = createHttpServer(4016);
+    const plugin = viteCaddyTlsPlugin({
+      domain: 'heartbeat.localhost',
+    }) as any;
+    let heartbeatCallback: (() => void) | null = null;
+    const setIntervalSpy = vi
+      .spyOn(global, 'setInterval')
+      .mockImplementation((handler) => {
+        heartbeatCallback = handler as () => void;
+        return { unref: vi.fn() } as unknown as NodeJS.Timeout;
+      });
+    const consoleErrorSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    vi.mocked(touchRouteOwnership).mockResolvedValueOnce(false);
+
+    plugin.configureServer({
+      httpServer,
+      config: { server: { port: 5173 } },
+    });
+
+    httpServer.listening = true;
+    httpServer.emit('listening');
+    await flushPromises();
+    await flushPromises();
+
+    expect(setIntervalSpy).toHaveBeenCalledWith(
+      expect.any(Function),
+      ROUTE_OWNERSHIP_HEARTBEAT_INTERVAL_MS,
+    );
+    const routeId = vi.mocked(addRoute).mock.calls[0][0];
+    const tlsPolicyId = vi.mocked(addTlsPolicy).mock.calls[0][0];
+
+    heartbeatCallback?.();
+    await flushPromises();
+    await flushPromises();
+
+    expect(removeRoute).toHaveBeenCalledWith(
+      routeId,
+      'http://localhost:2019',
+      'http://localhost:2019',
+    );
+    expect(removeTlsPolicy).toHaveBeenCalledWith(
+      tlsPolicyId,
+      'http://localhost:2019',
+      'http://localhost:2019',
+    );
+    expect(releaseRouteOwnership).toHaveBeenCalledWith(
+      expect.objectContaining({
+        routeId,
+        tlsPolicyId,
+      }),
+    );
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      'Lost route ownership for heartbeat.localhost. Cleaning up managed Caddy resources.',
     );
   });
 
@@ -464,11 +692,10 @@ describe('viteCaddyTlsPlugin', () => {
     const routeCall = vi.mocked(addRoute).mock.calls[0];
     expect(routeCall[7]).toBe('http://localhost:2020');
     expect(routeCall[8]).toBe('http://localhost:2020');
-    const routeId = routeCall[0];
-    expect(vi.mocked(removeRoute)).toHaveBeenCalledWith(
-      routeId,
-      'http://localhost:2020',
-      'http://localhost:2020',
+    expect(vi.mocked(claimRouteOwnership)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        caddyApiUrl: 'http://localhost:2020',
+      }),
     );
   });
 

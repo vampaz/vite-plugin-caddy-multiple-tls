@@ -24,7 +24,10 @@ jobs:
 
       - run: npm ci
 
-      - name: Run plugin build
+      - name: Run plugin unit tests
+        run: npm run test --workspace packages/plugin
+
+      - name: Build plugin package
         run: npm run build --workspace packages/plugin
 
   e2e:

@@ -1,12 +1,20 @@
 import { createServer, type Server } from 'node:http';
+import { rm } from 'node:fs/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   addRoute,
   addTlsPolicy,
   CADDY_ADMIN_ORIGIN_POLICY_ERROR_MESSAGE,
+  claimRouteOwnership,
   ensureBaseConfig,
   ensureCaddyReady,
+  findManagedRoutesForDomains,
+  findManagedTlsPoliciesForDomains,
+  getRouteOwnershipBaseDirectory,
   isCaddyRunning,
+  readRouteOwnership,
+  releaseRouteOwnership,
+  touchRouteOwnership,
 } from './utils.js';
 
 const execSyncMock = vi.hoisted(() => vi.fn());
@@ -35,6 +43,36 @@ function createResponse(options: {
 
 function getHeader(options: RequestInit | undefined, name: string) {
   return new Headers(options?.headers).get(name);
+}
+
+async function resetRouteOwnershipDirectory() {
+  await rm(getRouteOwnershipBaseDirectory(), { recursive: true, force: true });
+}
+
+function createOwnershipRecord(overrides: Record<string, unknown> = {}) {
+  const now = Date.now();
+
+  return {
+    version: 1 as const,
+    ownerId: 'owner-1',
+    pid: process.pid,
+    cwd: process.cwd(),
+    configRoot: '/tmp/app',
+    domains: ['app.localhost'],
+    routeId: 'vite-proxy-owner-1',
+    tlsPolicyId: null,
+    serverName: 'srv0',
+    caddyApiUrl: 'http://localhost:2019',
+    startedAt: now,
+    lastSeenAt: now,
+    ...overrides,
+  };
+}
+
+function createNodeError(code: string) {
+  const error = new Error(code) as NodeJS.ErrnoException;
+  error.code = code;
+  return error;
 }
 
 type OriginGuardServer = {
@@ -108,6 +146,265 @@ async function startOriginGuardServer(
     close: () => closeServer(server),
   };
 }
+
+beforeEach(async () => {
+  await resetRouteOwnershipDirectory();
+});
+
+afterEach(async () => {
+  await resetRouteOwnershipDirectory();
+});
+
+describe('route ownership', () => {
+  it('claims ownership when no record exists', async () => {
+    const record = createOwnershipRecord();
+
+    await expect(claimRouteOwnership(record)).resolves.toEqual({
+      status: 'claimed',
+      currentRecord: record,
+    });
+    await expect(
+      readRouteOwnership({
+        domains: record.domains,
+        serverName: record.serverName,
+        caddyApiUrl: record.caddyApiUrl,
+      }),
+    ).resolves.toEqual(record);
+  });
+
+  it('refuses a live conflicting owner', async () => {
+    const firstRecord = createOwnershipRecord();
+    const secondRecord = createOwnershipRecord({
+      ownerId: 'owner-2',
+      routeId: 'vite-proxy-owner-2',
+    });
+
+    await claimRouteOwnership(firstRecord);
+
+    await expect(claimRouteOwnership(secondRecord)).resolves.toEqual({
+      status: 'active-conflict',
+      currentRecord: secondRecord,
+      existingRecord: firstRecord,
+    });
+  });
+
+  it('refuses a live conflicting owner with overlapping domains', async () => {
+    const firstRecord = createOwnershipRecord({
+      domains: ['app.localhost', 'app-2.localhost'],
+    });
+    const secondRecord = createOwnershipRecord({
+      ownerId: 'owner-2',
+      domains: ['app.localhost'],
+      routeId: 'vite-proxy-owner-2',
+    });
+
+    await claimRouteOwnership(firstRecord);
+
+    await expect(claimRouteOwnership(secondRecord)).resolves.toEqual({
+      status: 'active-conflict',
+      currentRecord: secondRecord,
+      existingRecord: {
+        ...firstRecord,
+        domains: ['app-2.localhost', 'app.localhost'],
+      },
+    });
+  });
+
+  it('keeps a live pid active even when the heartbeat is stale', async () => {
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (signal === 0 && pid === 42_424) {
+        return true;
+      }
+
+      throw createNodeError('ESRCH');
+    });
+    const firstRecord = createOwnershipRecord({
+      pid: 42_424,
+      lastSeenAt: Date.now() - 60_000,
+    });
+    const secondRecord = createOwnershipRecord({
+      ownerId: 'owner-2',
+      routeId: 'vite-proxy-owner-2',
+    });
+
+    await claimRouteOwnership(firstRecord);
+
+    await expect(claimRouteOwnership(secondRecord)).resolves.toEqual({
+      status: 'active-conflict',
+      currentRecord: secondRecord,
+      existingRecord: firstRecord,
+    });
+
+    killSpy.mockRestore();
+  });
+
+  it('reclaims a stale owner record', async () => {
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw createNodeError('ESRCH');
+    });
+    const staleRecord = createOwnershipRecord({
+      ownerId: 'owner-stale',
+      pid: 99_999,
+      routeId: 'vite-proxy-owner-stale',
+      lastSeenAt: Date.now() - 60_000,
+    });
+    const nextRecord = createOwnershipRecord({
+      ownerId: 'owner-next',
+      routeId: 'vite-proxy-owner-next',
+    });
+
+    await claimRouteOwnership(staleRecord);
+
+    await expect(claimRouteOwnership(nextRecord)).resolves.toEqual({
+      status: 'reclaimed',
+      currentRecord: nextRecord,
+      previousRecords: [staleRecord],
+    });
+
+    killSpy.mockRestore();
+  });
+
+  it('reclaims a stale overlapping owner record', async () => {
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw createNodeError('ESRCH');
+    });
+    const staleRecord = createOwnershipRecord({
+      ownerId: 'owner-stale',
+      pid: 99_999,
+      domains: ['app.localhost', 'app-2.localhost'],
+      routeId: 'vite-proxy-owner-stale',
+      lastSeenAt: Date.now() - 60_000,
+    });
+    const nextRecord = createOwnershipRecord({
+      ownerId: 'owner-next',
+      domains: ['app.localhost'],
+      routeId: 'vite-proxy-owner-next',
+    });
+
+    await claimRouteOwnership(staleRecord);
+
+    await expect(claimRouteOwnership(nextRecord)).resolves.toEqual({
+      status: 'reclaimed',
+      currentRecord: nextRecord,
+      previousRecords: [
+        {
+          ...staleRecord,
+          domains: ['app-2.localhost', 'app.localhost'],
+        },
+      ],
+    });
+
+    killSpy.mockRestore();
+  });
+
+  it('touches and releases ownership only for the active owner', async () => {
+    const record = createOwnershipRecord();
+
+    await claimRouteOwnership(record);
+    await expect(releaseRouteOwnership({ ...record, ownerId: 'other-owner' })).resolves.toBe(
+      false,
+    );
+    await expect(touchRouteOwnership(record)).resolves.toBe(true);
+    const storedRecord = await readRouteOwnership({
+      domains: record.domains,
+      serverName: record.serverName,
+      caddyApiUrl: record.caddyApiUrl,
+    });
+    expect(storedRecord?.lastSeenAt).toBeGreaterThanOrEqual(record.lastSeenAt);
+    await expect(releaseRouteOwnership(record)).resolves.toBe(true);
+    await expect(
+      readRouteOwnership({
+        domains: record.domains,
+        serverName: record.serverName,
+        caddyApiUrl: record.caddyApiUrl,
+      }),
+    ).resolves.toBeNull();
+  });
+});
+
+describe('findManagedRoutesForDomains', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    execSyncMock.mockReset();
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('returns matching managed route ids without deleting them', async () => {
+    fetchMock.mockResolvedValue(
+      createResponse({
+        ok: true,
+        text: JSON.stringify([
+          {
+            '@id': 'vite-proxy-owner-1',
+            match: [{ host: ['app.localhost'] }],
+          },
+          {
+            '@id': 'vite-proxy-owner-2',
+            match: [{ host: ['other.localhost'] }],
+          },
+          {
+            '@id': 'custom-route',
+            match: [{ host: ['app.localhost'] }],
+          },
+        ]),
+      }),
+    );
+
+    await expect(findManagedRoutesForDomains(['app.localhost'])).resolves.toEqual([
+      'vite-proxy-owner-1',
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('findManagedTlsPoliciesForDomains', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    execSyncMock.mockReset();
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('returns matching managed tls policy ids without deleting them', async () => {
+    fetchMock.mockResolvedValue(
+      createResponse({
+        ok: true,
+        text: JSON.stringify([
+          {
+            '@id': 'vite-proxy-owner-1-tls',
+            subjects: ['app.localhost'],
+          },
+          {
+            '@id': 'vite-proxy-owner-2-tls',
+            subjects: ['other.localhost'],
+          },
+          {
+            '@id': 'custom-policy',
+            subjects: ['app.localhost'],
+          },
+        ]),
+      }),
+    );
+
+    await expect(findManagedTlsPoliciesForDomains(['app.localhost'])).resolves.toEqual([
+      'vite-proxy-owner-1-tls',
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('isCaddyRunning', () => {
   let fetchMock: ReturnType<typeof vi.fn>;

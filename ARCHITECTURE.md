@@ -9,6 +9,7 @@ The original plugin spawned a dedicated `caddy run` process for every Vite insta
 Instead of spawning a process per instance, this plugin adopts a **Client-Server** model where:
 1.  **Server**: A single, shared background Caddy instance listens on port 443.
 2.  **Client**: Each Vite plugin instance acts as an API client, dynamically injecting and removing routing rules via Caddy's [Admin API](https://caddyserver.com/docs/api).
+3.  **Ownership Registry**: Each Vite instance also claims a temp-file ownership record for its resolved domains so one live server cannot silently replace another.
 
 ## Architecture Diagram
 
@@ -56,7 +57,12 @@ The plugin checks if Caddy is running by pinging `http://localhost:2019/config/`
 Before adding specific routes, the plugin ensures the "Base Config" exists. It checks `/config/`, then creates a standard HTTP server listening on `:443` if one doesn't exist.
 
 ### 4. Dynamic Route Injection
-For every Vite instance, a unique `routeId` is generated. The plugin constructs a specific Caddy JSON route object:
+Before adding a route, the plugin claims ownership of the resolved domains.
+- **If no owner exists**: it claims the domains and continues.
+- **If a live owner exists**: it fails fast and tells the user to stop the other server or choose a unique hostname.
+- **If the owner is stale**: it reclaims ownership, removes the stale route and TLS policy, then continues.
+
+After ownership is established, the plugin generates a unique `routeId` for that running instance and constructs a specific Caddy JSON route object:
 
 ```json
 {
@@ -81,7 +87,7 @@ This JSON is `POST`ed to the Caddy API (`/config/apps/http/servers/srv0/routes`)
 When a custom domain is used, the plugin creates a TLS automation policy with Caddy's internal issuer so HTTPS works for non-`.localhost` domains.
 
 ### 6. Cleanup
-The plugin listens to the Vite DevServer's `close` event and process signals (SIGINT/SIGTERM). When triggered, it sends `DELETE` requests to the Caddy API using the specific `@id` of the route (and TLS policy if created). This removes *only* the configuration for that specific project, leaving other running projects (and Caddy itself) untouched.
+The plugin listens to the Vite DevServer's `close` event and process signals (SIGINT/SIGTERM). When triggered, it sends `DELETE` requests to the Caddy API using the specific `@id` of the route (and TLS policy if created), then releases its ownership record. This removes *only* the configuration for that specific project, leaving other running projects (and Caddy itself) untouched.
 
 ## Data Flow
 

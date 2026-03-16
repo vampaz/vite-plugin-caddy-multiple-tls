@@ -32,9 +32,9 @@
   },
   "homepage": "https://github.com/vampaz/vite-plugin-caddy-multiple-tls/#readme",
   "devDependencies": {
-    "@changesets/cli": "^2.29.8",
+    "@changesets/cli": "^2.30.0",
     "biome": "^0.3.3",
     "typescript": "^5.9.3",
-    "vite": "^7.3.1"
+    "vite": "^8.0.0"
   }
 }
