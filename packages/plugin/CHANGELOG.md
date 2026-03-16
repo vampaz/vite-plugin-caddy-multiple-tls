@@ -1,5 +1,15 @@
 # vite-plugin-caddy-multiple-tls
 
+## 1.7.1
+
+### Patch Changes
+
+- faaa5b4: Fix a shutdown regression where stopping a Vite server could leave hostname ownership behind and block an immediate restart on the same domain.
+
+  - release hostname ownership reliably on `SIGINT` and `SIGTERM`
+  - reclaim dead owner records immediately instead of waiting for heartbeat staleness
+  - add regression coverage for same-domain restart after terminal shutdown
+
 ## 1.7.0
 
 ### Minor Changes
