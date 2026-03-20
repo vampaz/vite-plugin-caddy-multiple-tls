@@ -1,8 +1,8 @@
-name: 'release'
+name: "release"
 on:
   workflow_run:
     workflows:
-      - 'Tests'
+      - "Tests"
     branches:
       - master
     types:
@@ -25,11 +25,11 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Set node version to 22
+      - name: Set node version to 24
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: 'npm'
+          node-version: 24
+          cache: "npm"
           cache-dependency-path: package-lock.json
 
       - name: Upgrade npm for OIDC support

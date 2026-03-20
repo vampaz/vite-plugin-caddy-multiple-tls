@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, devices } from "@playwright/test";
-import { computeUrl } from "./compute-host.ts";
+import { computeUrl } from "./compute-host.js";
 
 process.env.E2E_PREVIEW = "1";
 

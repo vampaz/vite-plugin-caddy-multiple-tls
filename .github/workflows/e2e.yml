@@ -1,4 +1,4 @@
-name: 'E2E'
+name: "E2E"
 on:
   workflow_call:
 
@@ -8,11 +8,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set node version to 22
+      - name: Set node version to 24
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: 'npm'
+          node-version: 24
+          cache: "npm"
           cache-dependency-path: |
             package-lock.json
             tests/e2e/package-lock.json

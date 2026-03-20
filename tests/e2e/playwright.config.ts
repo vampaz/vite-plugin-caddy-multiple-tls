@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, devices } from "@playwright/test";
-import { computeUrl } from "./compute-host.ts";
+import { computeUrl } from "./compute-host.js";
 
 function resolveBaseUrl() {
   if (process.env.E2E_BASE_URL) {
