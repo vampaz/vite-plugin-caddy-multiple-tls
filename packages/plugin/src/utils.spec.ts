@@ -1,6 +1,6 @@
-import { createServer, type Server } from 'node:http';
-import { rm } from 'node:fs/promises';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createServer, type Server } from "node:http";
+import { rm } from "node:fs/promises";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   addRoute,
   addTlsPolicy,
@@ -15,11 +15,11 @@ import {
   readRouteOwnership,
   releaseRouteOwnership,
   touchRouteOwnership,
-} from './utils.js';
+} from "./utils.js";
 
 const execSyncMock = vi.hoisted(() => vi.fn());
 
-vi.mock('node:child_process', () => ({
+vi.mock("node:child_process", () => ({
   execSync: execSyncMock,
 }));
 
@@ -29,15 +29,11 @@ type FetchResponse = {
   text: () => Promise<string>;
 };
 
-function createResponse(options: {
-  ok: boolean;
-  status?: number;
-  text?: string;
-}): FetchResponse {
+function createResponse(options: { ok: boolean; status?: number; text?: string }): FetchResponse {
   return {
     ok: options.ok,
     status: options.status ?? (options.ok ? 200 : 500),
-    text: async () => options.text ?? '',
+    text: async () => options.text ?? "",
   };
 }
 
@@ -54,15 +50,15 @@ function createOwnershipRecord(overrides: Record<string, unknown> = {}) {
 
   return {
     version: 1 as const,
-    ownerId: 'owner-1',
+    ownerId: "owner-1",
     pid: process.pid,
     cwd: process.cwd(),
-    configRoot: '/tmp/app',
-    domains: ['app.localhost'],
-    routeId: 'vite-proxy-owner-1',
+    configRoot: "/tmp/app",
+    domains: ["app.localhost"],
+    routeId: "vite-proxy-owner-1",
     tlsPolicyId: null,
-    serverName: 'srv0',
-    caddyApiUrl: 'http://localhost:2019',
+    serverName: "srv0",
+    caddyApiUrl: "http://localhost:2019",
     startedAt: now,
     lastSeenAt: now,
     ...overrides,
@@ -95,9 +91,9 @@ function closeServer(server: Server) {
 
 function listenServer(server: Server) {
   return new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      server.off('error', reject);
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
       resolve();
     });
   });
@@ -106,18 +102,18 @@ function listenServer(server: Server) {
 async function startOriginGuardServer(
   resolveExpectedOrigin: (port: number) => string,
 ): Promise<OriginGuardServer> {
-  let expectedOrigin = '';
+  let expectedOrigin = "";
   const server = createServer((request, response) => {
-    if (request.url !== '/config/') {
+    if (request.url !== "/config/") {
       response.statusCode = 404;
       response.end();
       return;
     }
 
-    const origin = request.headers.origin ?? '';
+    const origin = request.headers.origin ?? "";
     if (origin !== expectedOrigin) {
       response.statusCode = 403;
-      response.setHeader('Content-Type', 'application/json');
+      response.setHeader("Content-Type", "application/json");
       response.end(
         JSON.stringify({
           error: `client is not allowed to access from origin '${origin}'`,
@@ -127,14 +123,14 @@ async function startOriginGuardServer(
     }
 
     response.statusCode = 200;
-    response.setHeader('Content-Type', 'application/json');
-    response.end('{}');
+    response.setHeader("Content-Type", "application/json");
+    response.end("{}");
   });
 
   await listenServer(server);
   const address = server.address();
-  if (!address || typeof address === 'string') {
-    throw new Error('Failed to start origin guard server');
+  if (!address || typeof address === "string") {
+    throw new Error("Failed to start origin guard server");
   }
 
   const apiUrl = `http://127.0.0.1:${address.port}`;
@@ -155,12 +151,12 @@ afterEach(async () => {
   await resetRouteOwnershipDirectory();
 });
 
-describe('route ownership', () => {
-  it('claims ownership when no record exists', async () => {
+describe("route ownership", () => {
+  it("claims ownership when no record exists", async () => {
     const record = createOwnershipRecord();
 
     await expect(claimRouteOwnership(record)).resolves.toEqual({
-      status: 'claimed',
+      status: "claimed",
       currentRecord: record,
     });
     await expect(
@@ -172,65 +168,65 @@ describe('route ownership', () => {
     ).resolves.toEqual(record);
   });
 
-  it('refuses a live conflicting owner', async () => {
+  it("refuses a live conflicting owner", async () => {
     const firstRecord = createOwnershipRecord();
     const secondRecord = createOwnershipRecord({
-      ownerId: 'owner-2',
-      routeId: 'vite-proxy-owner-2',
+      ownerId: "owner-2",
+      routeId: "vite-proxy-owner-2",
     });
 
     await claimRouteOwnership(firstRecord);
 
     await expect(claimRouteOwnership(secondRecord)).resolves.toEqual({
-      status: 'active-conflict',
+      status: "active-conflict",
       currentRecord: secondRecord,
       existingRecord: firstRecord,
     });
   });
 
-  it('refuses a live conflicting owner with overlapping domains', async () => {
+  it("refuses a live conflicting owner with overlapping domains", async () => {
     const firstRecord = createOwnershipRecord({
-      domains: ['app.localhost', 'app-2.localhost'],
+      domains: ["app.localhost", "app-2.localhost"],
     });
     const secondRecord = createOwnershipRecord({
-      ownerId: 'owner-2',
-      domains: ['app.localhost'],
-      routeId: 'vite-proxy-owner-2',
+      ownerId: "owner-2",
+      domains: ["app.localhost"],
+      routeId: "vite-proxy-owner-2",
     });
 
     await claimRouteOwnership(firstRecord);
 
     await expect(claimRouteOwnership(secondRecord)).resolves.toEqual({
-      status: 'active-conflict',
+      status: "active-conflict",
       currentRecord: secondRecord,
       existingRecord: {
         ...firstRecord,
-        domains: ['app-2.localhost', 'app.localhost'],
+        domains: ["app-2.localhost", "app.localhost"],
       },
     });
   });
 
-  it('keeps a live pid active even when the heartbeat is stale', async () => {
-    const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+  it("keeps a live pid active even when the heartbeat is stale", async () => {
+    const killSpy = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
       if (signal === 0 && pid === 42_424) {
         return true;
       }
 
-      throw createNodeError('ESRCH');
+      throw createNodeError("ESRCH");
     });
     const firstRecord = createOwnershipRecord({
       pid: 42_424,
       lastSeenAt: Date.now() - 60_000,
     });
     const secondRecord = createOwnershipRecord({
-      ownerId: 'owner-2',
-      routeId: 'vite-proxy-owner-2',
+      ownerId: "owner-2",
+      routeId: "vite-proxy-owner-2",
     });
 
     await claimRouteOwnership(firstRecord);
 
     await expect(claimRouteOwnership(secondRecord)).resolves.toEqual({
-      status: 'active-conflict',
+      status: "active-conflict",
       currentRecord: secondRecord,
       existingRecord: firstRecord,
     });
@@ -238,25 +234,25 @@ describe('route ownership', () => {
     killSpy.mockRestore();
   });
 
-  it('reclaims a stale owner record', async () => {
-    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
-      throw createNodeError('ESRCH');
+  it("reclaims a stale owner record", async () => {
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+      throw createNodeError("ESRCH");
     });
     const staleRecord = createOwnershipRecord({
-      ownerId: 'owner-stale',
+      ownerId: "owner-stale",
       pid: 99_999,
-      routeId: 'vite-proxy-owner-stale',
+      routeId: "vite-proxy-owner-stale",
       lastSeenAt: Date.now() - 60_000,
     });
     const nextRecord = createOwnershipRecord({
-      ownerId: 'owner-next',
-      routeId: 'vite-proxy-owner-next',
+      ownerId: "owner-next",
+      routeId: "vite-proxy-owner-next",
     });
 
     await claimRouteOwnership(staleRecord);
 
     await expect(claimRouteOwnership(nextRecord)).resolves.toEqual({
-      status: 'reclaimed',
+      status: "reclaimed",
       currentRecord: nextRecord,
       previousRecords: [staleRecord],
     });
@@ -264,25 +260,25 @@ describe('route ownership', () => {
     killSpy.mockRestore();
   });
 
-  it('reclaims a dead owner immediately even when the heartbeat is still fresh', async () => {
-    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
-      throw createNodeError('ESRCH');
+  it("reclaims a dead owner immediately even when the heartbeat is still fresh", async () => {
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+      throw createNodeError("ESRCH");
     });
     const staleRecord = createOwnershipRecord({
-      ownerId: 'owner-stale',
+      ownerId: "owner-stale",
       pid: 99_999,
-      routeId: 'vite-proxy-owner-stale',
+      routeId: "vite-proxy-owner-stale",
       lastSeenAt: Date.now() - 1_000,
     });
     const nextRecord = createOwnershipRecord({
-      ownerId: 'owner-next',
-      routeId: 'vite-proxy-owner-next',
+      ownerId: "owner-next",
+      routeId: "vite-proxy-owner-next",
     });
 
     await claimRouteOwnership(staleRecord);
 
     await expect(claimRouteOwnership(nextRecord)).resolves.toEqual({
-      status: 'reclaimed',
+      status: "reclaimed",
       currentRecord: nextRecord,
       previousRecords: [staleRecord],
     });
@@ -290,32 +286,32 @@ describe('route ownership', () => {
     killSpy.mockRestore();
   });
 
-  it('reclaims a stale overlapping owner record', async () => {
-    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
-      throw createNodeError('ESRCH');
+  it("reclaims a stale overlapping owner record", async () => {
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+      throw createNodeError("ESRCH");
     });
     const staleRecord = createOwnershipRecord({
-      ownerId: 'owner-stale',
+      ownerId: "owner-stale",
       pid: 99_999,
-      domains: ['app.localhost', 'app-2.localhost'],
-      routeId: 'vite-proxy-owner-stale',
+      domains: ["app.localhost", "app-2.localhost"],
+      routeId: "vite-proxy-owner-stale",
       lastSeenAt: Date.now() - 60_000,
     });
     const nextRecord = createOwnershipRecord({
-      ownerId: 'owner-next',
-      domains: ['app.localhost'],
-      routeId: 'vite-proxy-owner-next',
+      ownerId: "owner-next",
+      domains: ["app.localhost"],
+      routeId: "vite-proxy-owner-next",
     });
 
     await claimRouteOwnership(staleRecord);
 
     await expect(claimRouteOwnership(nextRecord)).resolves.toEqual({
-      status: 'reclaimed',
+      status: "reclaimed",
       currentRecord: nextRecord,
       previousRecords: [
         {
           ...staleRecord,
-          domains: ['app-2.localhost', 'app.localhost'],
+          domains: ["app-2.localhost", "app.localhost"],
         },
       ],
     });
@@ -323,13 +319,11 @@ describe('route ownership', () => {
     killSpy.mockRestore();
   });
 
-  it('touches and releases ownership only for the active owner', async () => {
+  it("touches and releases ownership only for the active owner", async () => {
     const record = createOwnershipRecord();
 
     await claimRouteOwnership(record);
-    await expect(releaseRouteOwnership({ ...record, ownerId: 'other-owner' })).resolves.toBe(
-      false,
-    );
+    await expect(releaseRouteOwnership({ ...record, ownerId: "other-owner" })).resolves.toBe(false);
     await expect(touchRouteOwnership(record)).resolves.toBe(true);
     const storedRecord = await readRouteOwnership({
       domains: record.domains,
@@ -348,13 +342,13 @@ describe('route ownership', () => {
   });
 });
 
-describe('findManagedRoutesForDomains', () => {
+describe("findManagedRoutesForDomains", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     execSyncMock.mockReset();
     fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal("fetch", fetchMock);
   });
 
   afterEach(() => {
@@ -362,41 +356,41 @@ describe('findManagedRoutesForDomains', () => {
     vi.restoreAllMocks();
   });
 
-  it('returns matching managed route ids without deleting them', async () => {
+  it("returns matching managed route ids without deleting them", async () => {
     fetchMock.mockResolvedValue(
       createResponse({
         ok: true,
         text: JSON.stringify([
           {
-            '@id': 'vite-proxy-owner-1',
-            match: [{ host: ['app.localhost'] }],
+            "@id": "vite-proxy-owner-1",
+            match: [{ host: ["app.localhost"] }],
           },
           {
-            '@id': 'vite-proxy-owner-2',
-            match: [{ host: ['other.localhost'] }],
+            "@id": "vite-proxy-owner-2",
+            match: [{ host: ["other.localhost"] }],
           },
           {
-            '@id': 'custom-route',
-            match: [{ host: ['app.localhost'] }],
+            "@id": "custom-route",
+            match: [{ host: ["app.localhost"] }],
           },
         ]),
       }),
     );
 
-    await expect(findManagedRoutesForDomains(['app.localhost'])).resolves.toEqual([
-      'vite-proxy-owner-1',
+    await expect(findManagedRoutesForDomains(["app.localhost"])).resolves.toEqual([
+      "vite-proxy-owner-1",
     ]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 
-describe('findManagedTlsPoliciesForDomains', () => {
+describe("findManagedTlsPoliciesForDomains", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     execSyncMock.mockReset();
     fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal("fetch", fetchMock);
   });
 
   afterEach(() => {
@@ -404,41 +398,41 @@ describe('findManagedTlsPoliciesForDomains', () => {
     vi.restoreAllMocks();
   });
 
-  it('returns matching managed tls policy ids without deleting them', async () => {
+  it("returns matching managed tls policy ids without deleting them", async () => {
     fetchMock.mockResolvedValue(
       createResponse({
         ok: true,
         text: JSON.stringify([
           {
-            '@id': 'vite-proxy-owner-1-tls',
-            subjects: ['app.localhost'],
+            "@id": "vite-proxy-owner-1-tls",
+            subjects: ["app.localhost"],
           },
           {
-            '@id': 'vite-proxy-owner-2-tls',
-            subjects: ['other.localhost'],
+            "@id": "vite-proxy-owner-2-tls",
+            subjects: ["other.localhost"],
           },
           {
-            '@id': 'custom-policy',
-            subjects: ['app.localhost'],
+            "@id": "custom-policy",
+            subjects: ["app.localhost"],
           },
         ]),
       }),
     );
 
-    await expect(findManagedTlsPoliciesForDomains(['app.localhost'])).resolves.toEqual([
-      'vite-proxy-owner-1-tls',
+    await expect(findManagedTlsPoliciesForDomains(["app.localhost"])).resolves.toEqual([
+      "vite-proxy-owner-1-tls",
     ]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 
-describe('isCaddyRunning', () => {
+describe("isCaddyRunning", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     execSyncMock.mockReset();
     fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal("fetch", fetchMock);
   });
 
   afterEach(() => {
@@ -446,30 +440,27 @@ describe('isCaddyRunning', () => {
     vi.restoreAllMocks();
   });
 
-  it('injects Origin from caddyApiUrl', async () => {
+  it("injects Origin from caddyApiUrl", async () => {
     fetchMock.mockResolvedValue(createResponse({ ok: true }));
 
-    const running = await isCaddyRunning('http://127.0.0.1:2019');
+    const running = await isCaddyRunning("http://127.0.0.1:2019");
 
     expect(running).toBe(true);
     const options = fetchMock.mock.calls[0][1] as RequestInit;
-    expect(getHeader(options, 'Origin')).toBe('http://127.0.0.1:2019');
+    expect(getHeader(options, "Origin")).toBe("http://127.0.0.1:2019");
   });
 
-  it('uses explicit caddyAdminOrigin when provided', async () => {
+  it("uses explicit caddyAdminOrigin when provided", async () => {
     fetchMock.mockResolvedValue(createResponse({ ok: true }));
 
-    const running = await isCaddyRunning(
-      'http://127.0.0.1:2019',
-      'http://caddy-admin.local:2019',
-    );
+    const running = await isCaddyRunning("http://127.0.0.1:2019", "http://caddy-admin.local:2019");
 
     expect(running).toBe(true);
     const options = fetchMock.mock.calls[0][1] as RequestInit;
-    expect(getHeader(options, 'Origin')).toBe('http://caddy-admin.local:2019');
+    expect(getHeader(options, "Origin")).toBe("http://caddy-admin.local:2019");
   });
 
-  it('returns false when Admin API rejects origin', async () => {
+  it("returns false when Admin API rejects origin", async () => {
     fetchMock.mockResolvedValue(
       createResponse({
         ok: false,
@@ -484,13 +475,13 @@ describe('isCaddyRunning', () => {
   });
 });
 
-describe('ensureCaddyReady', () => {
+describe("ensureCaddyReady", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     execSyncMock.mockReset();
     fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal("fetch", fetchMock);
   });
 
   afterEach(() => {
@@ -498,7 +489,7 @@ describe('ensureCaddyReady', () => {
     vi.restoreAllMocks();
   });
 
-  it('surfaces origin policy errors without trying to start Caddy', async () => {
+  it("surfaces origin policy errors without trying to start Caddy", async () => {
     fetchMock.mockResolvedValue(
       createResponse({
         ok: false,
@@ -507,16 +498,14 @@ describe('ensureCaddyReady', () => {
       }),
     );
 
-    await expect(ensureCaddyReady('srv0')).rejects.toThrow(
-      CADDY_ADMIN_ORIGIN_POLICY_ERROR_MESSAGE,
-    );
+    await expect(ensureCaddyReady("srv0")).rejects.toThrow(CADDY_ADMIN_ORIGIN_POLICY_ERROR_MESSAGE);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('tries to start Caddy only after connectivity failures', async () => {
-    const connectivityError = new TypeError('fetch failed');
+  it("tries to start Caddy only after connectivity failures", async () => {
+    const connectivityError = new TypeError("fetch failed");
     (connectivityError as TypeError & { cause?: { code: string } }).cause = {
-      code: 'ECONNREFUSED',
+      code: "ECONNREFUSED",
     };
 
     fetchMock
@@ -524,13 +513,13 @@ describe('ensureCaddyReady', () => {
       .mockResolvedValueOnce(createResponse({ ok: true }))
       .mockResolvedValueOnce(createResponse({ ok: true }));
 
-    await expect(ensureCaddyReady('srv0')).resolves.toBeUndefined();
-    expect(execSyncMock).toHaveBeenCalledWith('caddy start', { stdio: 'ignore' });
+    await expect(ensureCaddyReady("srv0")).resolves.toBeUndefined();
+    expect(execSyncMock).toHaveBeenCalledWith("caddy start", { stdio: "ignore" });
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
 
-describe('origin enforcement integration', () => {
+describe("origin enforcement integration", () => {
   let guardServer: OriginGuardServer | null;
 
   beforeEach(() => {
@@ -544,7 +533,7 @@ describe('origin enforcement integration', () => {
     guardServer = null;
   });
 
-  it('transitions from denied to allowed when helper injects expected Origin', async () => {
+  it("transitions from denied to allowed when helper injects expected Origin", async () => {
     guardServer = await startOriginGuardServer((port) => {
       return `http://localhost:${port}`;
     });
@@ -555,21 +544,18 @@ describe('origin enforcement integration', () => {
     const withoutOverride = await isCaddyRunning(guardServer.apiUrl);
     expect(withoutOverride).toBe(false);
 
-    const withOverride = await isCaddyRunning(
-      guardServer.apiUrl,
-      guardServer.expectedOrigin,
-    );
+    const withOverride = await isCaddyRunning(guardServer.apiUrl, guardServer.expectedOrigin);
     expect(withOverride).toBe(true);
   });
 });
 
-describe('ensureBaseConfig', () => {
+describe("ensureBaseConfig", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     execSyncMock.mockReset();
     fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal("fetch", fetchMock);
   });
 
   afterEach(() => {
@@ -577,43 +563,41 @@ describe('ensureBaseConfig', () => {
     vi.restoreAllMocks();
   });
 
-  it('skips creation when the server already exists', async () => {
+  it("skips creation when the server already exists", async () => {
     fetchMock.mockResolvedValue(createResponse({ ok: true }));
 
-    await ensureBaseConfig('srv0');
+    await ensureBaseConfig("srv0");
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toBe(
-      'http://localhost:2019/config/apps/http/servers/srv0',
-    );
+    expect(fetchMock.mock.calls[0][0]).toBe("http://localhost:2019/config/apps/http/servers/srv0");
   });
 
-  it('loads base config when no config is present', async () => {
+  it("loads base config when no config is present", async () => {
     fetchMock
       .mockResolvedValueOnce(createResponse({ ok: false, status: 404 }))
-      .mockResolvedValueOnce(createResponse({ ok: true, text: '' }))
+      .mockResolvedValueOnce(createResponse({ ok: true, text: "" }))
       .mockResolvedValueOnce(createResponse({ ok: true }));
 
-    await expect(ensureBaseConfig('srv0')).resolves.toBeUndefined();
+    await expect(ensureBaseConfig("srv0")).resolves.toBeUndefined();
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(fetchMock.mock.calls[2][0]).toBe('http://localhost:2019/load');
-    expect(fetchMock.mock.calls[2][1]).toMatchObject({ method: 'POST' });
+    expect(fetchMock.mock.calls[2][0]).toBe("http://localhost:2019/load");
+    expect(fetchMock.mock.calls[2][1]).toMatchObject({ method: "POST" });
   });
 
-  it('treats null config as empty and loads base config', async () => {
+  it("treats null config as empty and loads base config", async () => {
     fetchMock
       .mockResolvedValueOnce(createResponse({ ok: false, status: 404 }))
-      .mockResolvedValueOnce(createResponse({ ok: true, text: 'null' }))
+      .mockResolvedValueOnce(createResponse({ ok: true, text: "null" }))
       .mockResolvedValueOnce(createResponse({ ok: true }));
 
-    await expect(ensureBaseConfig('srv0')).resolves.toBeUndefined();
+    await expect(ensureBaseConfig("srv0")).resolves.toBeUndefined();
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(fetchMock.mock.calls[2][0]).toBe('http://localhost:2019/load');
+    expect(fetchMock.mock.calls[2][0]).toBe("http://localhost:2019/load");
   });
 
-  it('creates the http app when apps are present but http is missing', async () => {
+  it("creates the http app when apps are present but http is missing", async () => {
     fetchMock
       .mockResolvedValueOnce(createResponse({ ok: false, status: 404 }))
       .mockResolvedValueOnce(
@@ -625,19 +609,15 @@ describe('ensureBaseConfig', () => {
       .mockResolvedValueOnce(createResponse({ ok: true }))
       .mockResolvedValueOnce(createResponse({ ok: true }));
 
-    await expect(ensureBaseConfig('srv0')).resolves.toBeUndefined();
+    await expect(ensureBaseConfig("srv0")).resolves.toBeUndefined();
 
     expect(fetchMock).toHaveBeenCalledTimes(4);
-    expect(fetchMock.mock.calls[2][0]).toBe(
-      'http://localhost:2019/config/apps/http',
-    );
-    expect(fetchMock.mock.calls[2][1]).toMatchObject({ method: 'PUT' });
-    expect(fetchMock.mock.calls[3][0]).toBe(
-      'http://localhost:2019/config/apps/http/servers/srv0',
-    );
+    expect(fetchMock.mock.calls[2][0]).toBe("http://localhost:2019/config/apps/http");
+    expect(fetchMock.mock.calls[2][1]).toMatchObject({ method: "PUT" });
+    expect(fetchMock.mock.calls[3][0]).toBe("http://localhost:2019/config/apps/http/servers/srv0");
   });
 
-  it('tolerates concurrent base config creation', async () => {
+  it("tolerates concurrent base config creation", async () => {
     fetchMock
       .mockResolvedValueOnce(createResponse({ ok: false, status: 404 }))
       .mockResolvedValueOnce(
@@ -648,22 +628,20 @@ describe('ensureBaseConfig', () => {
       )
       .mockResolvedValueOnce(createResponse({ ok: false, status: 409 }));
 
-    await expect(ensureBaseConfig('srv0')).resolves.toBeUndefined();
+    await expect(ensureBaseConfig("srv0")).resolves.toBeUndefined();
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(fetchMock.mock.calls[2][0]).toBe(
-      'http://localhost:2019/config/apps/http/servers/srv0',
-    );
+    expect(fetchMock.mock.calls[2][0]).toBe("http://localhost:2019/config/apps/http/servers/srv0");
   });
 });
 
-describe('addRoute', () => {
+describe("addRoute", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     execSyncMock.mockReset();
     fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal("fetch", fetchMock);
   });
 
   afterEach(() => {
@@ -671,95 +649,85 @@ describe('addRoute', () => {
     vi.restoreAllMocks();
   });
 
-  it('adds CORS headers and targets the provided server name', async () => {
+  it("adds CORS headers and targets the provided server name", async () => {
     fetchMock.mockResolvedValue(createResponse({ ok: true }));
 
     await addRoute(
-      'route-1',
-      ['app.localhost'],
+      "route-1",
+      ["app.localhost"],
       4321,
-      'https://example.test',
-      'custom',
-      '127.0.0.1',
+      "https://example.test",
+      "custom",
+      "127.0.0.1",
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, options] = fetchMock.mock.calls[0];
-    expect(url).toBe(
-      'http://localhost:2019/config/apps/http/servers/custom/routes',
-    );
+    expect(url).toBe("http://localhost:2019/config/apps/http/servers/custom/routes");
 
     const body = JSON.parse((options as RequestInit).body as string);
     const handlers = body.handle[0].routes[0].handle;
-    expect(handlers[0].handler).toBe('headers');
-    expect(handlers[0].response.set['Access-Control-Allow-Origin']).toEqual([
-      'https://example.test',
+    expect(handlers[0].handler).toBe("headers");
+    expect(handlers[0].response.set["Access-Control-Allow-Origin"]).toEqual([
+      "https://example.test",
     ]);
   });
 
-  it('uses the upstream host when provided', async () => {
+  it("uses the upstream host when provided", async () => {
     fetchMock.mockResolvedValue(createResponse({ ok: true }));
 
-    await addRoute('route-1', ['app.localhost'], 4321, undefined, 'srv0', 'localhost');
+    await addRoute("route-1", ["app.localhost"], 4321, undefined, "srv0", "localhost");
 
     const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
     const handlers = body.handle[0].routes[0].handle;
     const proxy = handlers.find((handler: { handler?: string }) => {
-      return handler.handler === 'reverse_proxy';
+      return handler.handler === "reverse_proxy";
     }) as { upstreams?: Array<{ dial: string }> } | undefined;
 
-    expect(proxy?.upstreams?.[0]?.dial).toBe('localhost:4321');
+    expect(proxy?.upstreams?.[0]?.dial).toBe("localhost:4321");
   });
 
-  it('overrides the upstream Host header when provided', async () => {
+  it("overrides the upstream Host header when provided", async () => {
     fetchMock.mockResolvedValue(createResponse({ ok: true }));
 
-    await addRoute(
-      'route-1',
-      ['app.localhost'],
-      4321,
-      undefined,
-      'srv0',
-      'localhost',
-      'localhost',
-    );
+    await addRoute("route-1", ["app.localhost"], 4321, undefined, "srv0", "localhost", "localhost");
 
     const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
     const handlers = body.handle[0].routes[0].handle;
     const proxy = handlers.find((handler: { handler?: string }) => {
-      return handler.handler === 'reverse_proxy';
+      return handler.handler === "reverse_proxy";
     }) as { headers?: { request?: { set?: Record<string, string> } } } | undefined;
 
-    expect(proxy?.headers?.request?.set?.Host).toEqual(['localhost']);
+    expect(proxy?.headers?.request?.set?.Host).toEqual(["localhost"]);
   });
 
-  it('preserves existing headers while injecting Origin', async () => {
+  it("preserves existing headers while injecting Origin", async () => {
     fetchMock.mockResolvedValue(createResponse({ ok: true }));
 
     await addRoute(
-      'route-1',
-      ['app.localhost'],
+      "route-1",
+      ["app.localhost"],
       4321,
       undefined,
-      'srv0',
-      '127.0.0.1',
+      "srv0",
+      "127.0.0.1",
       undefined,
-      'http://127.0.0.1:2020',
+      "http://127.0.0.1:2020",
     );
 
     const options = fetchMock.mock.calls[0][1] as RequestInit;
-    expect(getHeader(options, 'Content-Type')).toBe('application/json');
-    expect(getHeader(options, 'Origin')).toBe('http://127.0.0.1:2020');
+    expect(getHeader(options, "Content-Type")).toBe("application/json");
+    expect(getHeader(options, "Origin")).toBe("http://127.0.0.1:2020");
   });
 });
 
-describe('addTlsPolicy', () => {
+describe("addTlsPolicy", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     execSyncMock.mockReset();
     fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal("fetch", fetchMock);
   });
 
   afterEach(() => {
@@ -767,49 +735,44 @@ describe('addTlsPolicy', () => {
     vi.restoreAllMocks();
   });
 
-  it('adds an internal TLS policy for the provided domains', async () => {
+  it("adds an internal TLS policy for the provided domains", async () => {
     fetchMock
       .mockResolvedValueOnce(createResponse({ ok: true }))
       .mockResolvedValueOnce(createResponse({ ok: true }));
 
-    await addTlsPolicy('tls-1', ['local.conekto.eu']);
+    await addTlsPolicy("tls-1", ["local.conekto.eu"]);
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[1][0]).toBe(
-      'http://localhost:2019/config/apps/tls/automation/policies',
+      "http://localhost:2019/config/apps/tls/automation/policies",
     );
     const body = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
-    expect(body.issuers[0].module).toBe('internal');
+    expect(body.issuers[0].module).toBe("internal");
   });
 
-  it('ignores overlapping TLS policy errors', async () => {
-    fetchMock
-      .mockResolvedValueOnce(createResponse({ ok: true }))
-      .mockResolvedValueOnce(
-        createResponse({
-          ok: false,
-          status: 400,
-          text:
-            '{"error":"loading new config: loading tls app module: tls: invalid configuration: automation policy 2: cannot apply more than one automation policy to host: app.localhost (first match in policy 1)"}',
-        }),
-      );
+  it("ignores overlapping TLS policy errors", async () => {
+    fetchMock.mockResolvedValueOnce(createResponse({ ok: true })).mockResolvedValueOnce(
+      createResponse({
+        ok: false,
+        status: 400,
+        text: '{"error":"loading new config: loading tls app module: tls: invalid configuration: automation policy 2: cannot apply more than one automation policy to host: app.localhost (first match in policy 1)"}',
+      }),
+    );
 
-    await expect(addTlsPolicy('tls-3', ['app.localhost'])).resolves.toBeUndefined();
+    await expect(addTlsPolicy("tls-3", ["app.localhost"])).resolves.toBeUndefined();
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('initializes TLS automation when missing', async () => {
+  it("initializes TLS automation when missing", async () => {
     fetchMock
       .mockResolvedValueOnce(createResponse({ ok: false, status: 404 }))
       .mockResolvedValueOnce(createResponse({ ok: true }))
       .mockResolvedValueOnce(createResponse({ ok: true }));
 
-    await addTlsPolicy('tls-2', ['local.notesauditor.ai']);
+    await addTlsPolicy("tls-2", ["local.notesauditor.ai"]);
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(fetchMock.mock.calls[1][0]).toBe(
-      'http://localhost:2019/config/apps/tls/automation',
-    );
+    expect(fetchMock.mock.calls[1][0]).toBe("http://localhost:2019/config/apps/tls/automation");
   });
 });

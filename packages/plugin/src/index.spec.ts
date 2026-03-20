@@ -1,6 +1,6 @@
-import { EventEmitter } from 'node:events';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import viteCaddyTlsPlugin from './index.js';
+import { EventEmitter } from "node:events";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import viteCaddyTlsPlugin, { resolveCaddyTlsDomains, resolveCaddyTlsUrl } from "./index.js";
 import {
   addRoute,
   addTlsPolicy,
@@ -13,30 +13,30 @@ import {
   removeTlsPolicy,
   ROUTE_OWNERSHIP_HEARTBEAT_INTERVAL_MS,
   touchRouteOwnership,
-} from './utils.js';
+} from "./utils.js";
 
 function execSyncMock(command: string) {
-  if (command.includes('--show-toplevel')) return '/tmp/my-repo';
-  if (command.includes('--abbrev-ref')) return 'feature/test';
-  if (command.includes('--short')) return 'abc123';
-  return '';
+  if (command.includes("--show-toplevel")) return "/tmp/my-repo";
+  if (command.includes("--abbrev-ref")) return "feature/test";
+  if (command.includes("--short")) return "abc123";
+  return "";
 }
 
 const execSyncMockFn = vi.hoisted(() => vi.fn(execSyncMock));
 
-vi.mock('node:child_process', () => ({
+vi.mock("node:child_process", () => ({
   execSync: execSyncMockFn,
 }));
 
-vi.mock('./utils.js', () => ({
-  DEFAULT_CADDY_API_URL: 'http://localhost:2019',
+vi.mock("./utils.js", () => ({
+  DEFAULT_CADDY_API_URL: "http://localhost:2019",
   ROUTE_OWNERSHIP_HEARTBEAT_INTERVAL_MS: 10_000,
   validateCaddyIsInstalled: vi.fn(() => true),
   ensureCaddyReady: vi.fn(() => Promise.resolve()),
   addRoute: vi.fn(() => Promise.resolve()),
   addTlsPolicy: vi.fn(() => Promise.resolve()),
   claimRouteOwnership: vi.fn(async (record) => ({
-    status: 'claimed',
+    status: "claimed",
     currentRecord: record,
   })),
   findManagedRoutesForDomains: vi.fn(() => Promise.resolve([])),
@@ -71,47 +71,118 @@ function flushPromises() {
 function createClaimedRecord(overrides: Record<string, unknown> = {}) {
   return {
     version: 1,
-    ownerId: 'owner-1',
+    ownerId: "owner-1",
     pid: process.pid,
     cwd: process.cwd(),
-    configRoot: '/tmp/app',
-    domains: ['app.localhost'],
-    routeId: 'vite-proxy-owner-1',
+    configRoot: "/tmp/app",
+    domains: ["app.localhost"],
+    routeId: "vite-proxy-owner-1",
     tlsPolicyId: null,
-    serverName: 'srv0',
-    caddyApiUrl: 'http://localhost:2019',
+    serverName: "srv0",
+    caddyApiUrl: "http://localhost:2019",
     startedAt: Date.now(),
     lastSeenAt: Date.now(),
     ...overrides,
   };
 }
 
-describe('viteCaddyTlsPlugin', () => {
+describe("resolveCaddyTlsDomains", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("derives a single domain from git metadata by default", () => {
+    expect(resolveCaddyTlsDomains()).toEqual(["my-repo.feature-test.localhost"]);
+  });
+
+  it("normalizes explicit domains", () => {
+    expect(
+      resolveCaddyTlsDomains({
+        domain: [" One.Localhost ", "two.localhost", ""],
+      }),
+    ).toEqual(["one.localhost", "two.localhost"]);
+  });
+
+  it("compacts long derived branch labels deterministically", () => {
+    const longBranch = "feature/" + "really-long-segment-".repeat(8);
+    const firstDomains = resolveCaddyTlsDomains({
+      repo: "custom-repo",
+      branch: longBranch,
+      baseDomain: "localhost",
+    });
+    const secondDomains = resolveCaddyTlsDomains({
+      repo: "custom-repo",
+      branch: longBranch,
+      baseDomain: "localhost",
+    });
+    const differentDomains = resolveCaddyTlsDomains({
+      repo: "custom-repo",
+      branch: `${longBranch}other`,
+      baseDomain: "localhost",
+    });
+
+    expect(firstDomains).toEqual(secondDomains);
+    expect(firstDomains).not.toEqual(differentDomains);
+
+    const derivedDomain = firstDomains?.[0];
+    expect(derivedDomain).toBeTruthy();
+
+    const [, branchLabel] = derivedDomain!.split(".");
+    expect(branchLabel.length).toBeLessThanOrEqual(63);
+    expect(branchLabel).toMatch(/-[0-9a-f]{10}$/);
+  });
+});
+
+describe("resolveCaddyTlsUrl", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns the https URL for a single resolved domain", () => {
+    expect(
+      resolveCaddyTlsUrl({
+        repo: "custom-repo",
+        branch: "feature/branch",
+        baseDomain: "localhost",
+      }),
+    ).toBe("https://custom-repo.feature-branch.localhost");
+  });
+
+  it("returns null when multiple domains are configured", () => {
+    expect(
+      resolveCaddyTlsUrl({
+        domain: ["one.localhost", "two.localhost"],
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("viteCaddyTlsPlugin", () => {
   let originalSigintListeners: Listener[];
   let originalSigtermListeners: Listener[];
 
   beforeEach(() => {
     vi.clearAllMocks();
-    originalSigintListeners = process.listeners('SIGINT') as Listener[];
-    originalSigtermListeners = process.listeners('SIGTERM') as Listener[];
+    originalSigintListeners = process.listeners("SIGINT") as Listener[];
+    originalSigtermListeners = process.listeners("SIGTERM") as Listener[];
   });
 
   afterEach(() => {
-    process.removeAllListeners('SIGINT');
-    process.removeAllListeners('SIGTERM');
+    process.removeAllListeners("SIGINT");
+    process.removeAllListeners("SIGTERM");
     originalSigintListeners.forEach((listener) => {
-      process.on('SIGINT', listener);
+      process.on("SIGINT", listener);
     });
     originalSigtermListeners.forEach((listener) => {
-      process.on('SIGTERM', listener);
+      process.on("SIGTERM", listener);
     });
     vi.restoreAllMocks();
   });
 
-  it('uses the bound port after the server starts listening', async () => {
+  it("uses the bound port after the server starts listening", async () => {
     const httpServer = createHttpServer(4321);
     const plugin = viteCaddyTlsPlugin({
-      domain: 'app.localhost',
+      domain: "app.localhost",
     }) as any;
 
     plugin.configureServer({
@@ -122,7 +193,7 @@ describe('viteCaddyTlsPlugin', () => {
     expect(addRoute).not.toHaveBeenCalled();
 
     httpServer.listening = true;
-    httpServer.emit('listening');
+    httpServer.emit("listening");
     await flushPromises();
     await flushPromises();
 
@@ -131,17 +202,15 @@ describe('viteCaddyTlsPlugin', () => {
     expect(call[2]).toBe(4321);
   });
 
-  it('cleans up the route on SIGTERM', async () => {
+  it("cleans up the route on SIGTERM", async () => {
     const httpServer = createHttpServer(5001);
     const plugin = viteCaddyTlsPlugin({
-      baseDomain: 'localhost',
-      repo: 'cleanup',
-      branch: 'main',
+      baseDomain: "localhost",
+      repo: "cleanup",
+      branch: "main",
       internalTls: true,
     }) as any;
-    const exitSpy = vi
-      .spyOn(process, 'exit')
-      .mockImplementation((() => undefined) as never);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
 
     plugin.configureServer({
       httpServer,
@@ -149,24 +218,24 @@ describe('viteCaddyTlsPlugin', () => {
     });
 
     httpServer.listening = true;
-    httpServer.emit('listening');
+    httpServer.emit("listening");
     await flushPromises();
     await flushPromises();
 
     const routeId = vi.mocked(addRoute).mock.calls[0][0];
     const tlsPolicyId = vi.mocked(addTlsPolicy).mock.calls[0][0];
-    process.emit('SIGTERM');
+    process.emit("SIGTERM");
     await flushPromises();
 
     expect(removeRoute).toHaveBeenCalledWith(
       routeId,
-      'http://localhost:2019',
-      'http://localhost:2019',
+      "http://localhost:2019",
+      "http://localhost:2019",
     );
     expect(removeTlsPolicy).toHaveBeenCalledWith(
       tlsPolicyId,
-      'http://localhost:2019',
-      'http://localhost:2019',
+      "http://localhost:2019",
+      "http://localhost:2019",
     );
     expect(releaseRouteOwnership).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -177,14 +246,12 @@ describe('viteCaddyTlsPlugin', () => {
     expect(exitSpy).toHaveBeenCalledWith(143);
   });
 
-  it('retries cleanup when route removal fails', async () => {
+  it("retries cleanup when route removal fails", async () => {
     const httpServer = createHttpServer(5002);
     const plugin = viteCaddyTlsPlugin({
-      domain: 'retry.localhost',
+      domain: "retry.localhost",
     }) as any;
-    const exitSpy = vi
-      .spyOn(process, 'exit')
-      .mockImplementation((() => undefined) as never);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
     const removeRouteMock = vi.mocked(removeRoute);
 
     plugin.configureServer({
@@ -193,7 +260,7 @@ describe('viteCaddyTlsPlugin', () => {
     });
 
     httpServer.listening = true;
-    httpServer.emit('listening');
+    httpServer.emit("listening");
     await flushPromises();
     await flushPromises();
     removeRouteMock.mockReset();
@@ -202,7 +269,7 @@ describe('viteCaddyTlsPlugin', () => {
       .mockResolvedValueOnce(false)
       .mockResolvedValueOnce(true);
 
-    process.emit('SIGTERM');
+    process.emit("SIGTERM");
     await flushPromises();
     await new Promise((resolve) => setTimeout(resolve, 350));
     await flushPromises();
@@ -212,12 +279,12 @@ describe('viteCaddyTlsPlugin', () => {
     expect(exitSpy).toHaveBeenCalledWith(143);
   });
 
-  it('adds a TLS policy when baseDomain is provided', async () => {
+  it("adds a TLS policy when baseDomain is provided", async () => {
     const httpServer = createHttpServer(4322);
     const plugin = viteCaddyTlsPlugin({
-      baseDomain: 'local.conekto.eu',
-      repo: 'secure',
-      branch: 'main',
+      baseDomain: "local.conekto.eu",
+      repo: "secure",
+      branch: "main",
     }) as any;
 
     plugin.configureServer({
@@ -226,20 +293,18 @@ describe('viteCaddyTlsPlugin', () => {
     });
 
     httpServer.listening = true;
-    httpServer.emit('listening');
+    httpServer.emit("listening");
     await flushPromises();
     await flushPromises();
 
     expect(addTlsPolicy).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(addTlsPolicy).mock.calls[0][1]).toEqual([
-      'secure.main.local.conekto.eu',
-    ]);
+    expect(vi.mocked(addTlsPolicy).mock.calls[0][1]).toEqual(["secure.main.local.conekto.eu"]);
   });
 
-  it('uses an explicit domain when provided', async () => {
+  it("uses an explicit domain when provided", async () => {
     const httpServer = createHttpServer(4010);
     const plugin = viteCaddyTlsPlugin({
-      domain: 'explicit.localhost',
+      domain: "explicit.localhost",
     }) as any;
 
     plugin.configureServer({
@@ -248,35 +313,33 @@ describe('viteCaddyTlsPlugin', () => {
     });
 
     httpServer.listening = true;
-    httpServer.emit('listening');
+    httpServer.emit("listening");
     await flushPromises();
     await flushPromises();
 
     expect(addRoute).toHaveBeenCalledTimes(1);
     const domains = vi.mocked(addRoute).mock.calls[0][1];
-    expect(domains).toEqual(['explicit.localhost']);
+    expect(domains).toEqual(["explicit.localhost"]);
   });
 
-  it('refuses to steal domains owned by another live server', async () => {
+  it("refuses to steal domains owned by another live server", async () => {
     const httpServer = createHttpServer(4013);
     const plugin = viteCaddyTlsPlugin({
-      domain: 'stale.localhost',
+      domain: "stale.localhost",
     }) as any;
-    const consoleErrorSpy = vi
-      .spyOn(console, 'error')
-      .mockImplementation(() => undefined);
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.mocked(claimRouteOwnership).mockResolvedValueOnce({
-      status: 'active-conflict',
+      status: "active-conflict",
       currentRecord: createClaimedRecord({
-        ownerId: 'next-owner',
-        domains: ['stale.localhost'],
-        routeId: 'vite-proxy-next-owner',
+        ownerId: "next-owner",
+        domains: ["stale.localhost"],
+        routeId: "vite-proxy-next-owner",
       }),
       existingRecord: createClaimedRecord({
-        ownerId: 'active-owner',
+        ownerId: "active-owner",
         pid: 4242,
-        domains: ['stale.localhost'],
-        routeId: 'vite-proxy-active-owner',
+        domains: ["stale.localhost"],
+        routeId: "vite-proxy-active-owner",
       }),
     });
 
@@ -286,24 +349,20 @@ describe('viteCaddyTlsPlugin', () => {
     });
 
     httpServer.listening = true;
-    httpServer.emit('listening');
+    httpServer.emit("listening");
     await flushPromises();
     await flushPromises();
 
     expect(addRoute).not.toHaveBeenCalled();
     expect(removeRoute).not.toHaveBeenCalled();
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringContaining('stale.localhost'),
-    );
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringContaining('instanceLabel'),
-    );
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("stale.localhost"));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("instanceLabel"));
   });
 
-  it('normalizes explicit domains', async () => {
+  it("normalizes explicit domains", async () => {
     const httpServer = createHttpServer(4011);
     const plugin = viteCaddyTlsPlugin({
-      domain: '  APP.Localhost  ',
+      domain: "  APP.Localhost  ",
     }) as any;
 
     plugin.configureServer({
@@ -312,18 +371,18 @@ describe('viteCaddyTlsPlugin', () => {
     });
 
     httpServer.listening = true;
-    httpServer.emit('listening');
+    httpServer.emit("listening");
     await flushPromises();
     await flushPromises();
 
     const domains = vi.mocked(addRoute).mock.calls[0][1];
-    expect(domains).toEqual(['app.localhost']);
+    expect(domains).toEqual(["app.localhost"]);
   });
 
-  it('supports multiple explicit domains', async () => {
+  it("supports multiple explicit domains", async () => {
     const httpServer = createHttpServer(4012);
     const plugin = viteCaddyTlsPlugin({
-      domain: ['One.Localhost', 'two.localhost', ''],
+      domain: ["One.Localhost", "two.localhost", ""],
     }) as any;
 
     plugin.configureServer({
@@ -332,15 +391,15 @@ describe('viteCaddyTlsPlugin', () => {
     });
 
     httpServer.listening = true;
-    httpServer.emit('listening');
+    httpServer.emit("listening");
     await flushPromises();
     await flushPromises();
 
     const domains = vi.mocked(addRoute).mock.calls[0][1];
-    expect(domains).toEqual(['one.localhost', 'two.localhost']);
+    expect(domains).toEqual(["one.localhost", "two.localhost"]);
   });
 
-  it('defaults baseDomain to localhost', async () => {
+  it("defaults baseDomain to localhost", async () => {
     const httpServer = createHttpServer(4000);
     const plugin = viteCaddyTlsPlugin() as any;
 
@@ -350,19 +409,19 @@ describe('viteCaddyTlsPlugin', () => {
     });
 
     httpServer.listening = true;
-    httpServer.emit('listening');
+    httpServer.emit("listening");
     await flushPromises();
     await flushPromises();
 
     expect(addRoute).toHaveBeenCalledTimes(1);
     const domains = vi.mocked(addRoute).mock.calls[0][1];
-    expect(domains).toEqual(['my-repo.feature-test.localhost']);
+    expect(domains).toEqual(["my-repo.feature-test.localhost"]);
   });
 
-  it('appends instanceLabel to derived domains', async () => {
+  it("appends instanceLabel to derived domains", async () => {
     const httpServer = createHttpServer(4006);
     const plugin = viteCaddyTlsPlugin({
-      instanceLabel: 'web-1',
+      instanceLabel: "web-1",
     }) as any;
 
     plugin.configureServer({
@@ -371,75 +430,73 @@ describe('viteCaddyTlsPlugin', () => {
     });
 
     httpServer.listening = true;
-    httpServer.emit('listening');
+    httpServer.emit("listening");
     await flushPromises();
     await flushPromises();
 
     const domains = vi.mocked(addRoute).mock.calls[0][1];
-    expect(domains).toEqual(['my-repo.feature-test.web-1.localhost']);
+    expect(domains).toEqual(["my-repo.feature-test.web-1.localhost"]);
   });
 
-  it('prevents a second live server from stealing the first server domain', async () => {
+  it("prevents a second live server from stealing the first server domain", async () => {
     const firstServer = createHttpServer(4007);
     const secondServer = createHttpServer(4008);
     const firstPlugin = viteCaddyTlsPlugin({
-      domain: 'stable.localhost',
+      domain: "stable.localhost",
     }) as any;
     const secondPlugin = viteCaddyTlsPlugin({
-      domain: 'stable.localhost',
+      domain: "stable.localhost",
     }) as any;
     vi.mocked(claimRouteOwnership)
       .mockImplementationOnce(async (record) => ({
-        status: 'claimed',
+        status: "claimed",
         currentRecord: record,
       }))
       .mockImplementationOnce(async (record) => ({
-        status: 'active-conflict',
+        status: "active-conflict",
         currentRecord: record,
         existingRecord: createClaimedRecord({
-          ownerId: 'owner-1',
-          domains: ['stable.localhost'],
-          routeId: 'vite-proxy-owner-1',
+          ownerId: "owner-1",
+          domains: ["stable.localhost"],
+          routeId: "vite-proxy-owner-1",
         }),
       }));
 
     firstPlugin.configureServer({
       httpServer: firstServer,
-      config: { server: { port: 5173 }, root: '/tmp/app' },
+      config: { server: { port: 5173 }, root: "/tmp/app" },
     });
     secondPlugin.configureServer({
       httpServer: secondServer,
-      config: { server: { port: 5174 }, root: '/tmp/app' },
+      config: { server: { port: 5174 }, root: "/tmp/app" },
     });
 
     firstServer.listening = true;
     secondServer.listening = true;
-    firstServer.emit('listening');
-    secondServer.emit('listening');
+    firstServer.emit("listening");
+    secondServer.emit("listening");
     await flushPromises();
     await flushPromises();
 
     expect(vi.mocked(addRoute)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(addRoute).mock.calls[0][0]).toEqual(
-      expect.stringContaining('vite-proxy-'),
-    );
+    expect(vi.mocked(addRoute).mock.calls[0][0]).toEqual(expect.stringContaining("vite-proxy-"));
     expect(vi.mocked(removeRoute)).not.toHaveBeenCalled();
   });
 
-  it('reclaims stale ownership before adding the new route', async () => {
+  it("reclaims stale ownership before adding the new route", async () => {
     const httpServer = createHttpServer(4014);
     const plugin = viteCaddyTlsPlugin({
-      domain: 'reclaim.localhost',
+      domain: "reclaim.localhost",
     }) as any;
     vi.mocked(claimRouteOwnership).mockImplementationOnce(async (record) => ({
-      status: 'reclaimed',
+      status: "reclaimed",
       currentRecord: record,
       previousRecords: [
         createClaimedRecord({
-          ownerId: 'stale-owner',
-          domains: ['reclaim.localhost'],
-          routeId: 'vite-proxy-stale-owner',
-          tlsPolicyId: 'vite-proxy-stale-owner-tls',
+          ownerId: "stale-owner",
+          domains: ["reclaim.localhost"],
+          routeId: "vite-proxy-stale-owner",
+          tlsPolicyId: "vite-proxy-stale-owner-tls",
           lastSeenAt: Date.now() - 60_000,
         }),
       ],
@@ -451,47 +508,41 @@ describe('viteCaddyTlsPlugin', () => {
     });
 
     httpServer.listening = true;
-    httpServer.emit('listening');
+    httpServer.emit("listening");
     await flushPromises();
     await flushPromises();
 
     expect(removeTlsPolicy).toHaveBeenCalledWith(
-      'vite-proxy-stale-owner-tls',
-      'http://localhost:2019',
-      'http://localhost:2019',
+      "vite-proxy-stale-owner-tls",
+      "http://localhost:2019",
+      "http://localhost:2019",
     );
     expect(removeRoute).toHaveBeenCalledWith(
-      'vite-proxy-stale-owner',
-      'http://localhost:2019',
-      'http://localhost:2019',
+      "vite-proxy-stale-owner",
+      "http://localhost:2019",
+      "http://localhost:2019",
     );
     expect(addRoute).toHaveBeenCalledWith(
-      expect.stringContaining('vite-proxy-'),
-      ['reclaim.localhost'],
+      expect.stringContaining("vite-proxy-"),
+      ["reclaim.localhost"],
       4014,
       undefined,
       undefined,
-      '127.0.0.1',
+      "127.0.0.1",
       undefined,
-      'http://localhost:2019',
-      'http://localhost:2019',
+      "http://localhost:2019",
+      "http://localhost:2019",
     );
   });
 
-  it('reclaims orphaned managed caddy resources before adding the new route', async () => {
+  it("reclaims orphaned managed caddy resources before adding the new route", async () => {
     const httpServer = createHttpServer(4015);
     const plugin = viteCaddyTlsPlugin({
-      domain: 'orphan.localhost',
+      domain: "orphan.localhost",
     }) as any;
-    vi.mocked(findManagedRoutesForDomains).mockResolvedValueOnce([
-      'vite-proxy-orphan-route',
-    ]);
-    vi.mocked(findManagedTlsPoliciesForDomains).mockResolvedValueOnce([
-      'vite-proxy-orphan-tls',
-    ]);
-    const consoleWarnSpy = vi
-      .spyOn(console, 'warn')
-      .mockImplementation(() => undefined);
+    vi.mocked(findManagedRoutesForDomains).mockResolvedValueOnce(["vite-proxy-orphan-route"]);
+    vi.mocked(findManagedTlsPoliciesForDomains).mockResolvedValueOnce(["vite-proxy-orphan-tls"]);
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     plugin.configureServer({
       httpServer,
@@ -499,51 +550,47 @@ describe('viteCaddyTlsPlugin', () => {
     });
 
     httpServer.listening = true;
-    httpServer.emit('listening');
+    httpServer.emit("listening");
     await flushPromises();
     await flushPromises();
 
     expect(removeTlsPolicy).toHaveBeenCalledWith(
-      'vite-proxy-orphan-tls',
-      'http://localhost:2019',
-      'http://localhost:2019',
+      "vite-proxy-orphan-tls",
+      "http://localhost:2019",
+      "http://localhost:2019",
     );
     expect(removeRoute).toHaveBeenCalledWith(
-      'vite-proxy-orphan-route',
-      'http://localhost:2019',
-      'http://localhost:2019',
+      "vite-proxy-orphan-route",
+      "http://localhost:2019",
+      "http://localhost:2019",
     );
     expect(addRoute).toHaveBeenCalledWith(
-      expect.stringContaining('vite-proxy-'),
-      ['orphan.localhost'],
+      expect.stringContaining("vite-proxy-"),
+      ["orphan.localhost"],
       4015,
       undefined,
       undefined,
-      '127.0.0.1',
+      "127.0.0.1",
       undefined,
-      'http://localhost:2019',
-      'http://localhost:2019',
+      "http://localhost:2019",
+      "http://localhost:2019",
     );
     expect(consoleWarnSpy).toHaveBeenCalledWith(
-      'Reclaimed orphaned managed Caddy resources for orphan.localhost.',
+      "Reclaimed orphaned managed Caddy resources for orphan.localhost.",
     );
   });
 
-  it('cleans up its managed resources when ownership is lost during heartbeat refresh', async () => {
+  it("cleans up its managed resources when ownership is lost during heartbeat refresh", async () => {
     const httpServer = createHttpServer(4016);
     const plugin = viteCaddyTlsPlugin({
-      domain: 'heartbeat.localhost',
+      domain: "heartbeat.localhost",
     }) as any;
     let heartbeatCallback: (() => void) | null = null;
-    const setIntervalSpy = vi
-      .spyOn(global, 'setInterval')
-      .mockImplementation((handler) => {
-        heartbeatCallback = handler as () => void;
-        return { unref: vi.fn() } as unknown as NodeJS.Timeout;
-      });
-    const consoleErrorSpy = vi
-      .spyOn(console, 'error')
-      .mockImplementation(() => undefined);
+    const setIntervalSpy = vi.spyOn(global, "setInterval").mockImplementation((handler) => {
+      heartbeatCallback = handler as () => void;
+      return { unref: vi.fn() } as unknown as NodeJS.Timeout;
+    });
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.mocked(touchRouteOwnership).mockResolvedValueOnce(false);
 
     plugin.configureServer({
@@ -552,7 +599,7 @@ describe('viteCaddyTlsPlugin', () => {
     });
 
     httpServer.listening = true;
-    httpServer.emit('listening');
+    httpServer.emit("listening");
     await flushPromises();
     await flushPromises();
 
@@ -569,13 +616,13 @@ describe('viteCaddyTlsPlugin', () => {
 
     expect(removeRoute).toHaveBeenCalledWith(
       routeId,
-      'http://localhost:2019',
-      'http://localhost:2019',
+      "http://localhost:2019",
+      "http://localhost:2019",
     );
     expect(removeTlsPolicy).toHaveBeenCalledWith(
       tlsPolicyId,
-      'http://localhost:2019',
-      'http://localhost:2019',
+      "http://localhost:2019",
+      "http://localhost:2019",
     );
     expect(releaseRouteOwnership).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -584,14 +631,14 @@ describe('viteCaddyTlsPlugin', () => {
       }),
     );
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      'Lost route ownership for heartbeat.localhost. Cleaning up managed Caddy resources.',
+      "Lost route ownership for heartbeat.localhost. Cleaning up managed Caddy resources.",
     );
   });
 
-  it('normalizes baseDomain input', async () => {
+  it("normalizes baseDomain input", async () => {
     const httpServer = createHttpServer(4004);
     const plugin = viteCaddyTlsPlugin({
-      baseDomain: '.LocalHost.',
+      baseDomain: ".LocalHost.",
     }) as any;
 
     plugin.configureServer({
@@ -600,18 +647,18 @@ describe('viteCaddyTlsPlugin', () => {
     });
 
     httpServer.listening = true;
-    httpServer.emit('listening');
+    httpServer.emit("listening");
     await flushPromises();
     await flushPromises();
 
     const domains = vi.mocked(addRoute).mock.calls[0][1];
-    expect(domains).toEqual(['my-repo.feature-test.localhost']);
+    expect(domains).toEqual(["my-repo.feature-test.localhost"]);
   });
 
-  it('supports loopback domains', async () => {
+  it("supports loopback domains", async () => {
     const httpServer = createHttpServer(4002);
     const plugin = viteCaddyTlsPlugin({
-      loopbackDomain: 'localtest.me',
+      loopbackDomain: "localtest.me",
     }) as any;
 
     plugin.configureServer({
@@ -620,19 +667,19 @@ describe('viteCaddyTlsPlugin', () => {
     });
 
     httpServer.listening = true;
-    httpServer.emit('listening');
+    httpServer.emit("listening");
     await flushPromises();
     await flushPromises();
 
     expect(addRoute).toHaveBeenCalledTimes(1);
     const domains = vi.mocked(addRoute).mock.calls[0][1];
-    expect(domains).toEqual(['my-repo.feature-test.localtest.me']);
+    expect(domains).toEqual(["my-repo.feature-test.localtest.me"]);
   });
 
-  it('maps nip.io to a loopback base domain', async () => {
+  it("maps nip.io to a loopback base domain", async () => {
     const httpServer = createHttpServer(4003);
     const plugin = viteCaddyTlsPlugin({
-      loopbackDomain: 'nip.io',
+      loopbackDomain: "nip.io",
     }) as any;
 
     plugin.configureServer({
@@ -641,19 +688,19 @@ describe('viteCaddyTlsPlugin', () => {
     });
 
     httpServer.listening = true;
-    httpServer.emit('listening');
+    httpServer.emit("listening");
     await flushPromises();
     await flushPromises();
 
     expect(addRoute).toHaveBeenCalledTimes(1);
     const domains = vi.mocked(addRoute).mock.calls[0][1];
-    expect(domains).toEqual(['my-repo.feature-test.127.0.0.1.nip.io']);
+    expect(domains).toEqual(["my-repo.feature-test.127.0.0.1.nip.io"]);
   });
 
-  it('supports preview server', async () => {
+  it("supports preview server", async () => {
     const httpServer = createHttpServer(4173);
     const plugin = viteCaddyTlsPlugin({
-      domain: 'preview.localhost',
+      domain: "preview.localhost",
     }) as any;
 
     plugin.configurePreviewServer({
@@ -662,21 +709,21 @@ describe('viteCaddyTlsPlugin', () => {
     });
 
     httpServer.listening = true;
-    httpServer.emit('listening');
+    httpServer.emit("listening");
     await flushPromises();
     await flushPromises();
 
     expect(addRoute).toHaveBeenCalledTimes(1);
     const call = vi.mocked(addRoute).mock.calls[0];
-    expect(call[1]).toEqual(['preview.localhost']);
+    expect(call[1]).toEqual(["preview.localhost"]);
     expect(call[2]).toBe(4173);
   });
 
-  it('uses caddyApiUrl per plugin instance', async () => {
+  it("uses caddyApiUrl per plugin instance", async () => {
     const httpServer = createHttpServer(4174);
     const plugin = viteCaddyTlsPlugin({
-      domain: 'api-url.localhost',
-      caddyApiUrl: 'http://localhost:2020/',
+      domain: "api-url.localhost",
+      caddyApiUrl: "http://localhost:2020/",
     }) as any;
 
     plugin.configureServer({
@@ -685,26 +732,26 @@ describe('viteCaddyTlsPlugin', () => {
     });
 
     httpServer.listening = true;
-    httpServer.emit('listening');
+    httpServer.emit("listening");
     await flushPromises();
     await flushPromises();
 
     const routeCall = vi.mocked(addRoute).mock.calls[0];
-    expect(routeCall[7]).toBe('http://localhost:2020');
-    expect(routeCall[8]).toBe('http://localhost:2020');
+    expect(routeCall[7]).toBe("http://localhost:2020");
+    expect(routeCall[8]).toBe("http://localhost:2020");
     expect(vi.mocked(claimRouteOwnership)).toHaveBeenCalledWith(
       expect.objectContaining({
-        caddyApiUrl: 'http://localhost:2020',
+        caddyApiUrl: "http://localhost:2020",
       }),
     );
   });
 
-  it('uses caddyAdminOrigin when provided', async () => {
+  it("uses caddyAdminOrigin when provided", async () => {
     const httpServer = createHttpServer(4175);
     const plugin = viteCaddyTlsPlugin({
-      domain: 'admin-origin.localhost',
-      caddyApiUrl: 'http://localhost:2020/',
-      caddyAdminOrigin: 'http://admin.local:2019/path',
+      domain: "admin-origin.localhost",
+      caddyApiUrl: "http://localhost:2020/",
+      caddyAdminOrigin: "http://admin.local:2019/path",
     }) as any;
 
     plugin.configureServer({
@@ -713,63 +760,63 @@ describe('viteCaddyTlsPlugin', () => {
     });
 
     httpServer.listening = true;
-    httpServer.emit('listening');
+    httpServer.emit("listening");
     await flushPromises();
     await flushPromises();
 
     const routeCall = vi.mocked(addRoute).mock.calls[0];
-    expect(routeCall[7]).toBe('http://localhost:2020');
-    expect(routeCall[8]).toBe('http://admin.local:2019');
+    expect(routeCall[7]).toBe("http://localhost:2020");
+    expect(routeCall[8]).toBe("http://admin.local:2019");
     expect(vi.mocked(ensureCaddyReady)).toHaveBeenCalledWith(
       undefined,
-      'http://localhost:2020',
-      'http://admin.local:2019',
+      "http://localhost:2020",
+      "http://admin.local:2019",
     );
   });
 
-  it('prefers resolved URLs when available', async () => {
+  it("prefers resolved URLs when available", async () => {
     const httpServer = createHttpServer(5173);
     const plugin = viteCaddyTlsPlugin({
-      domain: 'resolved.localhost',
+      domain: "resolved.localhost",
     }) as any;
 
     plugin.configureServer({
       httpServer,
-      resolvedUrls: { local: ['http://dev.example.test:3999'] },
+      resolvedUrls: { local: ["http://dev.example.test:3999"] },
       config: { server: { port: 5173 } },
     });
 
     httpServer.listening = true;
-    httpServer.emit('listening');
+    httpServer.emit("listening");
     await flushPromises();
     await flushPromises();
 
     const call = vi.mocked(addRoute).mock.calls[0];
     expect(call[2]).toBe(3999);
-    expect(call[5]).toBe('dev.example.test');
+    expect(call[5]).toBe("dev.example.test");
   });
 
-  it('resolves wildcard hosts to loopback for upstream', async () => {
+  it("resolves wildcard hosts to loopback for upstream", async () => {
     const httpServer = createHttpServer(4005);
     const plugin = viteCaddyTlsPlugin({
-      domain: 'wildcard.localhost',
+      domain: "wildcard.localhost",
     }) as any;
 
     plugin.configureServer({
       httpServer,
-      config: { server: { host: '0.0.0.0', port: 4005 } },
+      config: { server: { host: "0.0.0.0", port: 4005 } },
     });
 
     httpServer.listening = true;
-    httpServer.emit('listening');
+    httpServer.emit("listening");
     await flushPromises();
     await flushPromises();
 
     const call = vi.mocked(addRoute).mock.calls[0];
-    expect(call[5]).toBe('127.0.0.1');
+    expect(call[5]).toBe("127.0.0.1");
   });
 
-  it('uses the actual bound port when listen auto-increments', async () => {
+  it("uses the actual bound port when listen auto-increments", async () => {
     const httpServer = new EventEmitter() as EventEmitter & {
       listening: boolean;
       currentPort: number;
@@ -788,12 +835,12 @@ describe('viteCaddyTlsPlugin', () => {
       config: { server: { port: 5173 } },
       listen: async function () {
         httpServer.listening = true;
-        httpServer.emit('listening');
+        httpServer.emit("listening");
       },
     };
 
     const plugin = viteCaddyTlsPlugin({
-      domain: 'auto-port.localhost',
+      domain: "auto-port.localhost",
     }) as any;
 
     plugin.configureServer(server);
@@ -806,9 +853,9 @@ describe('viteCaddyTlsPlugin', () => {
     expect(call[2]).toBe(5174);
   });
 
-  it('defaults hmr when a domain is resolved', () => {
+  it("defaults hmr when a domain is resolved", () => {
     const plugin = viteCaddyTlsPlugin({
-      domain: 'app.localhost',
+      domain: "app.localhost",
     }) as any;
 
     const config = plugin.config?.({});
@@ -818,8 +865,8 @@ describe('viteCaddyTlsPlugin', () => {
         host: true,
         allowedHosts: true,
         hmr: {
-          protocol: 'wss',
-          host: 'app.localhost',
+          protocol: "wss",
+          host: "app.localhost",
           clientPort: 443,
         },
       },
@@ -830,16 +877,16 @@ describe('viteCaddyTlsPlugin', () => {
     });
   });
 
-  it('preserves user-provided hmr settings', () => {
+  it("preserves user-provided hmr settings", () => {
     const plugin = viteCaddyTlsPlugin({
-      domain: 'app.localhost',
+      domain: "app.localhost",
     }) as any;
 
     const config = plugin.config?.({
       server: {
         hmr: {
-          protocol: 'ws',
-          host: 'custom.localhost',
+          protocol: "ws",
+          host: "custom.localhost",
           clientPort: 3000,
         },
       },
@@ -850,8 +897,8 @@ describe('viteCaddyTlsPlugin', () => {
         host: true,
         allowedHosts: true,
         hmr: {
-          protocol: 'ws',
-          host: 'custom.localhost',
+          protocol: "ws",
+          host: "custom.localhost",
           clientPort: 3000,
         },
       },
@@ -862,7 +909,7 @@ describe('viteCaddyTlsPlugin', () => {
     });
   });
 
-  it('defaults host and allowedHosts when undefined', () => {
+  it("defaults host and allowedHosts when undefined", () => {
     const plugin = viteCaddyTlsPlugin() as any;
 
     const config = plugin.config?.({});
@@ -872,8 +919,8 @@ describe('viteCaddyTlsPlugin', () => {
         host: true,
         allowedHosts: true,
         hmr: {
-          protocol: 'wss',
-          host: 'my-repo.feature-test.localhost',
+          protocol: "wss",
+          host: "my-repo.feature-test.localhost",
           clientPort: 443,
         },
       },
@@ -884,27 +931,27 @@ describe('viteCaddyTlsPlugin', () => {
     });
   });
 
-  it('preserves user-provided host settings', () => {
+  it("preserves user-provided host settings", () => {
     const plugin = viteCaddyTlsPlugin() as any;
 
     const config = plugin.config?.({
-      server: { host: '127.0.0.1', allowedHosts: false },
-      preview: { host: '0.0.0.0', allowedHosts: ['example.test'] },
+      server: { host: "127.0.0.1", allowedHosts: false },
+      preview: { host: "0.0.0.0", allowedHosts: ["example.test"] },
     });
 
     expect(config).toEqual({
       server: {
-        host: '127.0.0.1',
+        host: "127.0.0.1",
         allowedHosts: false,
         hmr: {
-          protocol: 'wss',
-          host: 'my-repo.feature-test.localhost',
+          protocol: "wss",
+          host: "my-repo.feature-test.localhost",
           clientPort: 443,
         },
       },
       preview: {
-        host: '0.0.0.0',
-        allowedHosts: ['example.test'],
+        host: "0.0.0.0",
+        allowedHosts: ["example.test"],
       },
     });
   });

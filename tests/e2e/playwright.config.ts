@@ -1,7 +1,7 @@
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { defineConfig, devices } from '@playwright/test';
-import { computeUrl } from './compute-host.js';
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { defineConfig, devices } from "@playwright/test";
+import { computeUrl } from "./compute-host.js";
 
 function resolveBaseUrl() {
   if (process.env.E2E_BASE_URL) {
@@ -11,28 +11,28 @@ function resolveBaseUrl() {
 }
 
 function resolveRepoRoot() {
-  return path.resolve(fileURLToPath(new URL('.', import.meta.url)), '../..');
+  return path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../..");
 }
 
 export default defineConfig({
-  testDir: './tests',
+  testDir: "./tests",
   use: {
     baseURL: resolveBaseUrl(),
     ignoreHTTPSErrors: true,
   },
   webServer: {
-    command: 'npm run dev --workspace playground',
+    command: "npm run dev --workspace playground",
     cwd: resolveRepoRoot(),
     url: resolveBaseUrl(),
     reuseExistingServer: true,
     ignoreHTTPSErrors: true,
-    stdout: 'pipe',
-    stderr: 'pipe',
+    stdout: "pipe",
+    stderr: "pipe",
   },
   projects: [
     {
-      name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      name: "chromium",
+      use: { ...devices["Desktop Chrome"] },
     },
   ],
 });

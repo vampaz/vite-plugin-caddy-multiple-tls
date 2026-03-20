@@ -15,14 +15,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set node version to 22
+      - name: Set node version to 24
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: "npm"
           cache-dependency-path: package-lock.json
 
       - run: npm ci
+
+      - name: Run lint and format checks
+        run: npm run check
 
       - name: Run plugin unit tests
         run: npm run test --workspace packages/plugin

@@ -1,7 +1,5 @@
-import type { PluginOption, PreviewServer, ResolvedConfig, ViteDevServer } from 'vite';
-import { execSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import path from 'node:path';
+import type { PluginOption, PreviewServer, ResolvedConfig, ViteDevServer } from "vite";
+import { randomUUID } from "node:crypto";
 import {
   validateCaddyIsInstalled,
   ensureCaddyReady,
@@ -18,9 +16,18 @@ import {
   DEFAULT_CADDY_API_URL,
   type RouteOwnershipClaimResult,
   type RouteOwnershipRecord,
-} from './utils.js';
+} from "./utils.js";
+import {
+  getGitRepoInfo,
+  normalizeBaseDomain,
+  normalizeDomains,
+  resolveCaddyTlsDomains as resolveCaddyTlsDomainsInternal,
+  resolveCaddyTlsUrl as resolveCaddyTlsUrlInternal,
+  sanitizeDomainLabel,
+} from "./domain-resolution.js";
+import type { CaddyTlsDomainOptions, LoopbackDomain } from "./domain-resolution.js";
 
-export interface ViteCaddyTlsPluginOptions {
+export interface ViteCaddyTlsPluginOptions extends CaddyTlsDomainOptions {
   /** Explicit domain to proxy without repo/branch derivation */
   domain?: string | string[];
   /** Base domain to build <repo>.<branch>.<baseDomain> (defaults to localhost) */
@@ -49,135 +56,21 @@ export interface ViteCaddyTlsPluginOptions {
   upstreamHostHeader?: string;
 }
 
-type GitInfo = {
-  repo?: string;
-  branch?: string;
-};
-
-type LoopbackDomain = 'localtest.me' | 'lvh.me' | 'nip.io';
-
-const LOOPBACK_DOMAINS: Record<LoopbackDomain, string> = {
-  'localtest.me': 'localtest.me',
-  'lvh.me': 'lvh.me',
-  'nip.io': '127.0.0.1.nip.io',
-};
-
-function execGit(command: string) {
-  return execSync(command, { stdio: ['ignore', 'pipe', 'ignore'] })
-    .toString()
-    .trim();
-}
-
-function getGitRepoInfo(): GitInfo {
-  const info: GitInfo = {};
-
-  try {
-    const repoRoot = execGit('git rev-parse --show-toplevel');
-    if (repoRoot) {
-      info.repo = path.basename(repoRoot);
-    }
-  } catch (e) {
-    // Ignore, fall back to explicit config
-  }
-
-  try {
-    let branch = execGit('git rev-parse --abbrev-ref HEAD');
-    if (branch === 'HEAD') {
-      branch = execGit('git rev-parse --short HEAD');
-    }
-    if (branch) {
-      info.branch = branch;
-    }
-  } catch (e) {
-    // Ignore, fall back to explicit config
-  }
-
-  return info;
-}
-
-function normalizeBaseDomain(baseDomain: string) {
-  return baseDomain.trim().replace(/^\.+|\.+$/g, '').toLowerCase();
-}
-
-function resolveBaseDomain(options: ViteCaddyTlsPluginOptions) {
-  if (options.baseDomain !== undefined) {
-    return normalizeBaseDomain(options.baseDomain);
-  }
-
-  if (options.loopbackDomain) {
-    return normalizeBaseDomain(LOOPBACK_DOMAINS[options.loopbackDomain]);
-  }
-
-  return 'localhost';
-}
-
 function resolveUpstreamHost(host: string | boolean | undefined) {
-  if (typeof host === 'string') {
+  if (typeof host === "string") {
     const trimmed = host.trim();
-    if (trimmed && trimmed !== '0.0.0.0' && trimmed !== '::') {
+    if (trimmed && trimmed !== "0.0.0.0" && trimmed !== "::") {
       return trimmed;
     }
   }
 
-  return '127.0.0.1';
-}
-function sanitizeDomainLabel(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
-function buildDerivedDomain(options: ViteCaddyTlsPluginOptions) {
-  const baseDomain = resolveBaseDomain(options);
-  if (!baseDomain) return null;
-
-  let repo = options.repo;
-  let branch = options.branch;
-
-  if (!repo || !branch) {
-    const info = getGitRepoInfo();
-    if (!repo) repo = info.repo;
-    if (!branch) branch = info.branch;
-  }
-
-  if (!repo || !branch) return null;
-
-  const repoLabel = sanitizeDomainLabel(repo);
-  const branchLabel = sanitizeDomainLabel(branch);
-
-  if (!repoLabel || !branchLabel) return null;
-
-  const labels = [repoLabel, branchLabel];
-  if (options.instanceLabel !== undefined) {
-    const instanceLabel = sanitizeDomainLabel(options.instanceLabel);
-    if (!instanceLabel) return null;
-    labels.push(instanceLabel);
-  }
-
-  return `${labels.join('.')}.${baseDomain}`;
-}
-
-function normalizeDomain(domain: string) {
-  const trimmed = domain.trim().toLowerCase();
-  if (!trimmed) return null;
-  return trimmed;
-}
-
-function normalizeDomains(domains: string | string[]) {
-  const domainList = Array.isArray(domains) ? domains : [domains];
-  const normalized = domainList
-    .map((domain) => normalizeDomain(domain))
-    .filter((domain): domain is string => Boolean(domain));
-  if (normalized.length === 0) return null;
-  return Array.from(new Set(normalized));
+  return "127.0.0.1";
 }
 
 function normalizeCaddyApiUrl(url: string) {
   const trimmed = url.trim();
   if (!trimmed) return null;
-  return trimmed.replace(/\/+$/g, '');
+  return trimmed.replace(/\/+$/g, "");
 }
 
 function normalizeCaddyAdminOrigin(origin: string) {
@@ -185,19 +78,17 @@ function normalizeCaddyAdminOrigin(origin: string) {
   if (!trimmed) return null;
   try {
     return new URL(trimmed).origin;
-  } catch (e) {
+  } catch {
     return null;
   }
 }
 
-function resolveDomains(options: ViteCaddyTlsPluginOptions) {
-  if (options.domain) {
-    return normalizeDomains(options.domain);
-  }
+export function resolveCaddyTlsDomains(options: ViteCaddyTlsPluginOptions = {}) {
+  return resolveCaddyTlsDomainsInternal(options);
+}
 
-  const derivedDomain = buildDerivedDomain(options);
-  if (!derivedDomain) return null;
-  return [derivedDomain];
+export function resolveCaddyTlsUrl(options: ViteCaddyTlsPluginOptions = {}) {
+  return resolveCaddyTlsUrlInternal(options);
 }
 
 /**
@@ -212,22 +103,20 @@ function resolveDomains(options: ViteCaddyTlsPluginOptions) {
  * ```
  * @returns {Plugin} - a Vite plugin
  */
-export default function viteCaddyTlsPlugin(
-  {
-    domain,
-    baseDomain,
-    loopbackDomain,
-    repo,
-    branch,
-    instanceLabel,
-    cors,
-    serverName,
-    caddyApiUrl,
-    caddyAdminOrigin,
-    internalTls,
-    upstreamHostHeader,
-  }: ViteCaddyTlsPluginOptions = {},
-): PluginOption {
+export default function viteCaddyTlsPlugin({
+  domain,
+  baseDomain,
+  loopbackDomain,
+  repo,
+  branch,
+  instanceLabel,
+  cors,
+  serverName,
+  caddyApiUrl,
+  caddyAdminOrigin,
+  internalTls,
+  upstreamHostHeader,
+}: ViteCaddyTlsPluginOptions = {}): PluginOption {
   const normalizedApiUrl = caddyApiUrl ? normalizeCaddyApiUrl(caddyApiUrl) : null;
   const pluginCaddyApiUrl = normalizedApiUrl ?? DEFAULT_CADDY_API_URL;
   const normalizedAdminOrigin = caddyAdminOrigin
@@ -235,14 +124,10 @@ export default function viteCaddyTlsPlugin(
     : null;
   const pluginCaddyAdminOrigin = normalizedAdminOrigin ?? pluginCaddyApiUrl;
   if (caddyApiUrl !== undefined && !normalizedApiUrl) {
-    console.warn(
-      `caddyApiUrl is empty after trimming. Falling back to ${DEFAULT_CADDY_API_URL}.`,
-    );
+    console.warn(`caddyApiUrl is empty after trimming. Falling back to ${DEFAULT_CADDY_API_URL}.`);
   }
   if (caddyAdminOrigin !== undefined && !normalizedAdminOrigin) {
-    console.warn(
-      `caddyAdminOrigin is invalid. Falling back to ${pluginCaddyApiUrl}.`,
-    );
+    console.warn(`caddyAdminOrigin is invalid. Falling back to ${pluginCaddyApiUrl}.`);
   }
 
   function createOwnerId() {
@@ -269,25 +154,22 @@ export default function viteCaddyTlsPlugin(
       domains: [...domains],
       routeId,
       tlsPolicyId: shouldUseInternalTls ? `${routeId}-tls` : null,
-      serverName: serverName ?? 'srv0',
+      serverName: serverName ?? "srv0",
       caddyApiUrl: pluginCaddyApiUrl,
       startedAt: now,
       lastSeenAt: now,
     };
   }
 
-  function buildOwnershipConflictMessage(
-    domains: string[],
-    existingRecord: RouteOwnershipRecord,
-  ) {
+  function buildOwnershipConflictMessage(domains: string[], existingRecord: RouteOwnershipRecord) {
     const ownerLocation = existingRecord.configRoot ?? existingRecord.cwd;
-    const domainLabel = domains.join(', ');
+    const domainLabel = domains.join(", ");
 
     return [
-      `Cannot claim ${domainLabel}: another Vite server already owns ${domains.length > 1 ? 'these domains' : 'this domain'}.`,
+      `Cannot claim ${domainLabel}: another Vite server already owns ${domains.length > 1 ? "these domains" : "this domain"}.`,
       `Existing owner pid ${existingRecord.pid} from ${ownerLocation}.`,
-      'Stop the other server first, or use `instanceLabel` or `domain` to make the hostname unique.',
-    ].join(' ');
+      "Stop the other server first, or use `instanceLabel` or `domain` to make the hostname unique.",
+    ].join(" ");
   }
 
   async function releaseOwnershipRecord(record: RouteOwnershipRecord | null) {
@@ -309,20 +191,15 @@ export default function viteCaddyTlsPlugin(
       const tlsPolicyId = record.tlsPolicyId;
       cleaned =
         (await removeWithRetry(
-          () =>
-            removeTlsPolicy(
-              tlsPolicyId,
-              pluginCaddyApiUrl,
-              pluginCaddyAdminOrigin,
-            ),
-          'TLS policy',
+          () => removeTlsPolicy(tlsPolicyId, pluginCaddyApiUrl, pluginCaddyAdminOrigin),
+          "TLS policy",
         )) && cleaned;
     }
 
     cleaned =
       (await removeWithRetry(
         () => removeRoute(record.routeId, pluginCaddyApiUrl, pluginCaddyAdminOrigin),
-        'route',
+        "route",
       )) && cleaned;
 
     return cleaned;
@@ -338,12 +215,7 @@ export default function viteCaddyTlsPlugin(
     for (const managedTlsPolicyId of tlsPolicyIds) {
       cleaned =
         (await removeWithRetry(
-          () =>
-            removeTlsPolicy(
-              managedTlsPolicyId,
-              pluginCaddyApiUrl,
-              pluginCaddyAdminOrigin,
-            ),
+          () => removeTlsPolicy(managedTlsPolicyId, pluginCaddyApiUrl, pluginCaddyAdminOrigin),
           `managed TLS policy ${managedTlsPolicyId}`,
         )) && cleaned;
     }
@@ -364,14 +236,14 @@ export default function viteCaddyTlsPlugin(
   }
 
   function getPreviewPort(config: ResolvedConfig) {
-    if (typeof config.preview?.port === 'number') {
+    if (typeof config.preview?.port === "number") {
       return config.preview.port;
     }
     return null;
   }
 
   function getPreviewHost(config: ResolvedConfig) {
-    if (config.preview && 'host' in config.preview) {
+    if (config.preview && "host" in config.preview) {
       return resolveUpstreamHost(config.preview.host);
     }
     return null;
@@ -382,9 +254,9 @@ export default function viteCaddyTlsPlugin(
   } {
     return (
       !!server &&
-      typeof server === 'object' &&
-      'listen' in server &&
-      typeof (server as { listen?: unknown }).listen === 'function'
+      typeof server === "object" &&
+      "listen" in server &&
+      typeof (server as { listen?: unknown }).listen === "function"
     );
   }
 
@@ -392,9 +264,9 @@ export default function viteCaddyTlsPlugin(
     const { httpServer, config } = server;
     const previewMode = isPreviewServer(server);
     const fallbackPort = previewMode
-      ? getPreviewPort(config) ?? 4173
+      ? (getPreviewPort(config) ?? 4173)
       : config.server.port || 5173;
-    const resolvedDomains = resolveDomains({
+    const resolvedDomains = resolveCaddyTlsDomains({
       domain,
       baseDomain,
       loopbackDomain,
@@ -417,30 +289,30 @@ export default function viteCaddyTlsPlugin(
     function buildDomainResolutionMessage() {
       const issues: string[] = [];
       if (domain !== undefined && !normalizeDomains(domain)) {
-        issues.push('`domain` is empty after trimming');
+        issues.push("`domain` is empty after trimming");
       }
       if (baseDomain !== undefined && !normalizeBaseDomain(baseDomain)) {
-        issues.push('`baseDomain` is empty after trimming');
+        issues.push("`baseDomain` is empty after trimming");
       }
       if (instanceLabel !== undefined && !sanitizeDomainLabel(instanceLabel)) {
-        issues.push('`instanceLabel` is empty after sanitization');
+        issues.push("`instanceLabel` is empty after sanitization");
       }
 
       const info = getGitRepoInfo();
       const resolvedRepo = repo ?? info.repo;
       const resolvedBranch = branch ?? info.branch;
       if (!resolvedRepo) {
-        issues.push('repo name not found (not a git repo?)');
+        issues.push("repo name not found (not a git repo?)");
       }
       if (!resolvedBranch) {
-        issues.push('branch name not found (detached HEAD?)');
+        issues.push("branch name not found (detached HEAD?)");
       }
 
       if (issues.length === 0) {
-        return 'No domain resolved. Provide `domain`, or `repo` and `branch`, or ensure git metadata is available.';
+        return "No domain resolved. Provide `domain`, or `repo` and `branch`, or ensure git metadata is available.";
       }
 
-      return `No domain resolved. Issues: ${issues.join('; ')}. Provide \`domain\`, or \`repo\` and \`branch\`, or ensure git metadata is available.`;
+      return `No domain resolved. Issues: ${issues.join("; ")}. Provide \`domain\`, or \`repo\` and \`branch\`, or ensure git metadata is available.`;
     }
 
     if (domainArray.length === 0) {
@@ -450,9 +322,9 @@ export default function viteCaddyTlsPlugin(
     let tlsPolicyAdded = false;
 
     function getPortFromAddress(address: unknown) {
-      if (address && typeof address === 'object' && 'port' in address) {
+      if (address && typeof address === "object" && "port" in address) {
         const port = (address as { port: unknown }).port;
-        if (typeof port === 'number') {
+        if (typeof port === "number") {
           return port;
         }
       }
@@ -467,38 +339,34 @@ export default function viteCaddyTlsPlugin(
         try {
           const url = new URL(resolvedUrl);
           if (resolvedHost === null && url.hostname) {
-            resolvedHost = url.hostname === 'localhost' ? '127.0.0.1' : url.hostname;
+            resolvedHost = url.hostname === "localhost" ? "127.0.0.1" : url.hostname;
           }
           const port = Number(url.port);
           if (resolvedPort === null && !Number.isNaN(port)) {
             resolvedPort = port;
           }
-        } catch (e) {
+        } catch {
           // Ignore URL parsing errors
         }
       }
 
       if (httpServer) {
         const address = httpServer.address();
-        if (address && typeof address === 'object') {
+        if (address && typeof address === "object") {
           const port = getPortFromAddress(address);
           if (resolvedPort === null && port !== null) {
             resolvedPort = port;
           }
-          if (resolvedHost === null && 'address' in address) {
+          if (resolvedHost === null && "address" in address) {
             const host = (address as { address?: unknown }).address;
-            if (
-              typeof host === 'string' &&
-              host !== '0.0.0.0' &&
-              host !== '::'
-            ) {
+            if (typeof host === "string" && host !== "0.0.0.0" && host !== "::") {
               resolvedHost = host;
             }
           }
         }
       }
 
-      if (resolvedPort === null && typeof config.server.port === 'number') {
+      if (resolvedPort === null && typeof config.server.port === "number") {
         resolvedPort = config.server.port;
       }
       if (previewMode && resolvedPort === null) {
@@ -525,11 +393,11 @@ export default function viteCaddyTlsPlugin(
 
     function getUpstreamHost() {
       updateResolvedTarget();
-      return resolvedHost ?? '127.0.0.1';
+      return resolvedHost ?? "127.0.0.1";
     }
 
     function formatUpstreamTarget(host: string, port: number) {
-      if (host.includes(':') && !host.startsWith('[')) {
+      if (host.includes(":") && !host.startsWith("[")) {
         return `[${host}]:${port}`;
       }
       return `${host}:${port}`;
@@ -556,30 +424,30 @@ export default function viteCaddyTlsPlugin(
     }
 
     function getSignalExitCode(signal: NodeJS.Signals) {
-      if (signal === 'SIGINT') return 130;
-      if (signal === 'SIGTERM') return 143;
+      if (signal === "SIGINT") return 130;
+      if (signal === "SIGTERM") return 143;
       return 1;
     }
 
     function handleSignal(signal: NodeJS.Signals) {
-      process.off('SIGINT', onSigint);
-      process.off('SIGTERM', onSigterm);
+      process.off("SIGINT", onSigint);
+      process.off("SIGTERM", onSigterm);
       void cleanupRoute().finally(() => {
         process.exit(getSignalExitCode(signal));
       });
     }
 
     function onSigint() {
-      handleSignal('SIGINT');
+      handleSignal("SIGINT");
     }
 
     function onSigterm() {
-      handleSignal('SIGTERM');
+      handleSignal("SIGTERM");
     }
 
     function registerProcessCleanup() {
-      process.once('SIGINT', onSigint);
-      process.once('SIGTERM', onSigterm);
+      process.once("SIGINT", onSigint);
+      process.once("SIGTERM", onSigterm);
     }
 
     function wait(ms: number) {
@@ -617,13 +485,13 @@ export default function viteCaddyTlsPlugin(
             }
 
             console.error(
-              `Lost route ownership for ${domainArray.join(', ')}. Cleaning up managed Caddy resources.`,
+              `Lost route ownership for ${domainArray.join(", ")}. Cleaning up managed Caddy resources.`,
             );
             void cleanupRoute();
           })
           .catch((error) => {
             console.error(
-              `Failed to refresh route ownership for ${domainArray.join(', ')}.`,
+              `Failed to refresh route ownership for ${domainArray.join(", ")}.`,
               error,
             );
           });
@@ -654,29 +522,26 @@ export default function viteCaddyTlsPlugin(
       try {
         claimResult = await claimRouteOwnership(ownershipRecord);
       } catch (e) {
-        console.error('Failed to claim route ownership for the resolved domains.', e);
+        console.error("Failed to claim route ownership for the resolved domains.", e);
         return;
       }
 
-      if (claimResult.status === 'active-conflict') {
-        console.error(
-          buildOwnershipConflictMessage(domainArray, claimResult.existingRecord),
-        );
+      if (claimResult.status === "active-conflict") {
+        console.error(buildOwnershipConflictMessage(domainArray, claimResult.existingRecord));
         return;
       }
 
       activeOwnershipRecord = claimResult.currentRecord;
 
-      if (claimResult.status === 'reclaimed') {
+      if (claimResult.status === "reclaimed") {
         let reclaimed = true;
         for (const previousRecord of claimResult.previousRecords) {
-          reclaimed =
-            (await cleanupClaimedResources(previousRecord, removeWithRetry)) && reclaimed;
+          reclaimed = (await cleanupClaimedResources(previousRecord, removeWithRetry)) && reclaimed;
         }
 
         if (!reclaimed) {
           console.error(
-            `Failed to reclaim stale ownership for ${domainArray.join(', ')}. Try stopping the other server or removing stale Caddy state manually.`,
+            `Failed to reclaim stale ownership for ${domainArray.join(", ")}. Try stopping the other server or removing stale Caddy state manually.`,
           );
           await releaseOwnershipRecord(activeOwnershipRecord);
           activeOwnershipRecord = null;
@@ -715,12 +580,10 @@ export default function viteCaddyTlsPlugin(
         );
 
         if (reclaimedOrphans) {
-          console.warn(
-            `Reclaimed orphaned managed Caddy resources for ${domainArray.join(', ')}.`,
-          );
+          console.warn(`Reclaimed orphaned managed Caddy resources for ${domainArray.join(", ")}.`);
         } else {
           console.error(
-            `Cannot claim ${domainArray.join(', ')} because Caddy still has orphaned managed resources. Remove the stale Caddy state or use \`instanceLabel\` or \`domain\` to make the hostname unique.`,
+            `Cannot claim ${domainArray.join(", ")} because Caddy still has orphaned managed resources. Remove the stale Caddy state or use \`instanceLabel\` or \`domain\` to make the hostname unique.`,
           );
           await releaseOwnershipRecord(activeOwnershipRecord);
           activeOwnershipRecord = null;
@@ -730,12 +593,7 @@ export default function viteCaddyTlsPlugin(
 
       if (tlsPolicyId) {
         try {
-          await addTlsPolicy(
-            tlsPolicyId,
-            domainArray,
-            pluginCaddyApiUrl,
-            pluginCaddyAdminOrigin,
-          );
+          await addTlsPolicy(tlsPolicyId, domainArray, pluginCaddyApiUrl, pluginCaddyAdminOrigin);
           tlsPolicyAdded = true;
         } catch (e) {
           console.error(
@@ -777,18 +635,16 @@ export default function viteCaddyTlsPlugin(
         startOwnershipHeartbeat(activeOwnershipRecord);
       }
 
-      console.log('\n🔒 Caddy is proxying your traffic on https');
+      console.log("\n🔒 Caddy is proxying your traffic on https");
       console.log(`\n➡️ Upstream target: http://${formatUpstreamTarget(upstreamHost, port)}`);
-      console.log(
-        `\n🔗 Access your local ${domainArray.length > 1 ? 'servers' : 'server'}!`,
-      );
+      console.log(`\n🔗 Access your local ${domainArray.length > 1 ? "servers" : "server"}!`);
 
       domainArray.forEach((domain) => {
         console.log(`🌍 https://${domain}`);
       });
 
-      if (process.platform === 'linux' && !loopbackDomain) {
-        console.log('\n🐧 Linux users: if the domain doesn\'t resolve, run:');
+      if (process.platform === "linux" && !loopbackDomain) {
+        console.log("\n🐧 Linux users: if the domain doesn't resolve, run:");
         domainArray.forEach((domain) => {
           console.log(`   echo "127.0.0.1 ${domain}" | sudo tee -a /etc/hosts`);
         });
@@ -797,7 +653,7 @@ export default function viteCaddyTlsPlugin(
 
       // 4. Remove route on close or process exit
       registerProcessCleanup();
-      httpServer?.once('close', onServerClose);
+      httpServer?.once("close", onServerClose);
     }
 
     function runSetupOnce() {
@@ -830,16 +686,16 @@ export default function viteCaddyTlsPlugin(
     if (httpServer?.listening) {
       runSetupOnce();
     } else if (httpServer) {
-      httpServer.once('listening', onListening);
+      httpServer.once("listening", onListening);
     } else if (!listenWrapped) {
       runSetupOnce();
     }
   }
 
   return {
-    name: 'vite:caddy-tls',
+    name: "vite:caddy-tls",
     config(userConfig) {
-      const resolvedDomains = resolveDomains({
+      const resolvedDomains = resolveCaddyTlsDomains({
         domain,
         baseDomain,
         loopbackDomain,
@@ -851,7 +707,7 @@ export default function viteCaddyTlsPlugin(
       const hmrConfig =
         userConfig.server?.hmr === undefined && defaultHmrDomain
           ? {
-              protocol: 'wss',
+              protocol: "wss",
               host: defaultHmrDomain,
               clientPort: 443,
             }
@@ -861,17 +717,13 @@ export default function viteCaddyTlsPlugin(
         server: {
           host: userConfig.server?.host === undefined ? true : userConfig.server.host,
           allowedHosts:
-            userConfig.server?.allowedHosts === undefined
-              ? true
-              : userConfig.server.allowedHosts,
+            userConfig.server?.allowedHosts === undefined ? true : userConfig.server.allowedHosts,
           ...(hmrConfig !== undefined ? { hmr: hmrConfig } : {}),
         },
         preview: {
           host: userConfig.preview?.host === undefined ? true : userConfig.preview.host,
           allowedHosts:
-            userConfig.preview?.allowedHosts === undefined
-              ? true
-              : userConfig.preview.allowedHosts,
+            userConfig.preview?.allowedHosts === undefined ? true : userConfig.preview.allowedHosts,
         },
       };
     },

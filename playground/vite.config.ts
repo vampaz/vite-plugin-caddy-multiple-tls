@@ -1,11 +1,11 @@
-import { defineConfig } from 'vite';
-import { execSync } from 'node:child_process';
-import caddyTls from '../packages/plugin/src/index.js';
-import { playgroundBaseDomain } from './base-domain.js';
+import { defineConfig } from "vite";
+import { execSync } from "node:child_process";
+import caddyTls from "../packages/plugin/src/index.js";
+import { playgroundBaseDomain } from "./base-domain.js";
 
-type LoopbackDomain = 'localtest.me' | 'lvh.me' | 'nip.io';
+type LoopbackDomain = "localtest.me" | "lvh.me" | "nip.io";
 
-const VALID_LOOPBACK_DOMAINS: LoopbackDomain[] = ['localtest.me', 'lvh.me', 'nip.io'];
+const VALID_LOOPBACK_DOMAINS: LoopbackDomain[] = ["localtest.me", "lvh.me", "nip.io"];
 
 function isLoopbackDomain(value: string | undefined): value is LoopbackDomain {
   return VALID_LOOPBACK_DOMAINS.includes(value as LoopbackDomain);
@@ -21,9 +21,9 @@ const shouldUseDefaultBase = !e2eDomain && !e2eBaseDomain && !e2eLoopbackDomain;
 
 function getGitBranch() {
   try {
-    let branch = execSync('git rev-parse --abbrev-ref HEAD').toString().trim();
-    if (branch === 'HEAD') {
-      branch = execSync('git rev-parse --short HEAD').toString().trim();
+    let branch = execSync("git rev-parse --abbrev-ref HEAD").toString().trim();
+    if (branch === "HEAD") {
+      branch = execSync("git rev-parse --short HEAD").toString().trim();
     }
     return branch;
   } catch {

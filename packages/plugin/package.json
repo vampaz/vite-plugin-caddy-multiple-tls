@@ -3,17 +3,22 @@
   "version": "1.7.1",
   "description": "Vite plugin that uses Caddy to provide local HTTPS with derived domains.",
   "keywords": [
-    "vite",
-    "plugin",
     "caddy",
     "https",
+    "local-development",
+    "plugin",
     "tls",
-    "local-development"
+    "vite"
   ],
+  "homepage": "https://github.com/vampaz/vite-plugin-caddy-multiple-tls/#readme",
+  "bugs": {
+    "url": "https://github.com/vampaz/vite-plugin-caddy-multiple-tls/issues"
+  },
   "license": "MIT",
   "author": "vampaz",
-  "publishConfig": {
-    "access": "public"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vampaz/vite-plugin-caddy-multiple-tls.git"
   },
   "files": [
     "dist"
@@ -27,6 +32,9 @@
       "import": "./dist/index.js"
     }
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "tsup --watch src/**/* src/index.ts --format esm --dts-resolve",
     "sync-readme": "bash scripts/sync-readme.sh",
@@ -35,20 +43,6 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "engines": {
-    "node": ">=22.0.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/vampaz/vite-plugin-caddy-multiple-tls.git"
-  },
-  "bugs": {
-    "url": "https://github.com/vampaz/vite-plugin-caddy-multiple-tls/issues"
-  },
-  "homepage": "https://github.com/vampaz/vite-plugin-caddy-multiple-tls/#readme",
-  "peerDependencies": {
-    "vite": "^3.0.0 || ^4.0.0 || ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0"
-  },
   "devDependencies": {
     "@types/fs-extra": "^11.0.4",
     "@types/node": "^25.0.3",
@@ -56,5 +50,11 @@
     "tsup": "^8.5.1",
     "vite": "^8.0.0",
     "vitest": "^4.0.16"
+  },
+  "peerDependencies": {
+    "vite": "^3.0.0 || ^4.0.0 || ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
   }
 }
