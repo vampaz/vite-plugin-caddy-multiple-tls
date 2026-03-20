@@ -102,6 +102,35 @@ describe("resolveCaddyTlsDomains", () => {
       }),
     ).toEqual(["one.localhost", "two.localhost"]);
   });
+
+  it("compacts long derived branch labels deterministically", () => {
+    const longBranch = "feature/" + "really-long-segment-".repeat(8);
+    const firstDomains = resolveCaddyTlsDomains({
+      repo: "custom-repo",
+      branch: longBranch,
+      baseDomain: "localhost",
+    });
+    const secondDomains = resolveCaddyTlsDomains({
+      repo: "custom-repo",
+      branch: longBranch,
+      baseDomain: "localhost",
+    });
+    const differentDomains = resolveCaddyTlsDomains({
+      repo: "custom-repo",
+      branch: `${longBranch}other`,
+      baseDomain: "localhost",
+    });
+
+    expect(firstDomains).toEqual(secondDomains);
+    expect(firstDomains).not.toEqual(differentDomains);
+
+    const derivedDomain = firstDomains?.[0];
+    expect(derivedDomain).toBeTruthy();
+
+    const [, branchLabel] = derivedDomain!.split(".");
+    expect(branchLabel.length).toBeLessThanOrEqual(63);
+    expect(branchLabel).toMatch(/-[0-9a-f]{10}$/);
+  });
 });
 
 describe("resolveCaddyTlsUrl", () => {

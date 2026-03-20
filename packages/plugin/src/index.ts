@@ -1,7 +1,5 @@
 import type { PluginOption, PreviewServer, ResolvedConfig, ViteDevServer } from "vite";
-import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 import {
   validateCaddyIsInstalled,
   ensureCaddyReady,
@@ -19,8 +17,17 @@ import {
   type RouteOwnershipClaimResult,
   type RouteOwnershipRecord,
 } from "./utils.js";
+import {
+  getGitRepoInfo,
+  normalizeBaseDomain,
+  normalizeDomains,
+  resolveCaddyTlsDomains as resolveCaddyTlsDomainsInternal,
+  resolveCaddyTlsUrl as resolveCaddyTlsUrlInternal,
+  sanitizeDomainLabel,
+} from "./domain-resolution.js";
+import type { CaddyTlsDomainOptions, LoopbackDomain } from "./domain-resolution.js";
 
-export interface ViteCaddyTlsPluginOptions {
+export interface ViteCaddyTlsPluginOptions extends CaddyTlsDomainOptions {
   /** Explicit domain to proxy without repo/branch derivation */
   domain?: string | string[];
   /** Base domain to build <repo>.<branch>.<baseDomain> (defaults to localhost) */
@@ -49,71 +56,6 @@ export interface ViteCaddyTlsPluginOptions {
   upstreamHostHeader?: string;
 }
 
-type GitInfo = {
-  repo?: string;
-  branch?: string;
-};
-
-type LoopbackDomain = "localtest.me" | "lvh.me" | "nip.io";
-
-const LOOPBACK_DOMAINS: Record<LoopbackDomain, string> = {
-  "localtest.me": "localtest.me",
-  "lvh.me": "lvh.me",
-  "nip.io": "127.0.0.1.nip.io",
-};
-
-function execGit(command: string) {
-  return execSync(command, { stdio: ["ignore", "pipe", "ignore"] })
-    .toString()
-    .trim();
-}
-
-function getGitRepoInfo(): GitInfo {
-  const info: GitInfo = {};
-
-  try {
-    const repoRoot = execGit("git rev-parse --show-toplevel");
-    if (repoRoot) {
-      info.repo = path.basename(repoRoot);
-    }
-  } catch {
-    // Ignore, fall back to explicit config
-  }
-
-  try {
-    let branch = execGit("git rev-parse --abbrev-ref HEAD");
-    if (branch === "HEAD") {
-      branch = execGit("git rev-parse --short HEAD");
-    }
-    if (branch) {
-      info.branch = branch;
-    }
-  } catch {
-    // Ignore, fall back to explicit config
-  }
-
-  return info;
-}
-
-function normalizeBaseDomain(baseDomain: string) {
-  return baseDomain
-    .trim()
-    .replace(/^\.+|\.+$/g, "")
-    .toLowerCase();
-}
-
-function resolveBaseDomain(options: ViteCaddyTlsPluginOptions) {
-  if (options.baseDomain !== undefined) {
-    return normalizeBaseDomain(options.baseDomain);
-  }
-
-  if (options.loopbackDomain) {
-    return normalizeBaseDomain(LOOPBACK_DOMAINS[options.loopbackDomain]);
-  }
-
-  return "localhost";
-}
-
 function resolveUpstreamHost(host: string | boolean | undefined) {
   if (typeof host === "string") {
     const trimmed = host.trim();
@@ -123,58 +65,6 @@ function resolveUpstreamHost(host: string | boolean | undefined) {
   }
 
   return "127.0.0.1";
-}
-function sanitizeDomainLabel(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-function buildDerivedDomain(options: ViteCaddyTlsPluginOptions) {
-  const baseDomain = resolveBaseDomain(options);
-  if (!baseDomain) return null;
-
-  let repo = options.repo;
-  let branch = options.branch;
-
-  if (!repo || !branch) {
-    const info = getGitRepoInfo();
-    if (!repo) repo = info.repo;
-    if (!branch) branch = info.branch;
-  }
-
-  if (!repo || !branch) return null;
-
-  const repoLabel = sanitizeDomainLabel(repo);
-  const branchLabel = sanitizeDomainLabel(branch);
-
-  if (!repoLabel || !branchLabel) return null;
-
-  const labels = [repoLabel, branchLabel];
-  if (options.instanceLabel !== undefined) {
-    const instanceLabel = sanitizeDomainLabel(options.instanceLabel);
-    if (!instanceLabel) return null;
-    labels.push(instanceLabel);
-  }
-
-  return `${labels.join(".")}.${baseDomain}`;
-}
-
-function normalizeDomain(domain: string) {
-  const trimmed = domain.trim().toLowerCase();
-  if (!trimmed) return null;
-  return trimmed;
-}
-
-function normalizeDomains(domains: string | string[]) {
-  const domainList = Array.isArray(domains) ? domains : [domains];
-  const normalized = domainList
-    .map((domain) => normalizeDomain(domain))
-    .filter((domain): domain is string => Boolean(domain));
-  if (normalized.length === 0) return null;
-  return Array.from(new Set(normalized));
 }
 
 function normalizeCaddyApiUrl(url: string) {
@@ -194,19 +84,11 @@ function normalizeCaddyAdminOrigin(origin: string) {
 }
 
 export function resolveCaddyTlsDomains(options: ViteCaddyTlsPluginOptions = {}) {
-  if (options.domain) {
-    return normalizeDomains(options.domain);
-  }
-
-  const derivedDomain = buildDerivedDomain(options);
-  if (!derivedDomain) return null;
-  return [derivedDomain];
+  return resolveCaddyTlsDomainsInternal(options);
 }
 
 export function resolveCaddyTlsUrl(options: ViteCaddyTlsPluginOptions = {}) {
-  const domains = resolveCaddyTlsDomains(options);
-  if (!domains || domains.length !== 1) return null;
-  return `https://${domains[0]}`;
+  return resolveCaddyTlsUrlInternal(options);
 }
 
 /**

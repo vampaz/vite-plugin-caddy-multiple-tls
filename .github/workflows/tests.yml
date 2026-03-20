@@ -24,6 +24,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Run lint and format checks
+        run: npm run check
+
       - name: Run plugin unit tests
         run: npm run test --workspace packages/plugin
 
