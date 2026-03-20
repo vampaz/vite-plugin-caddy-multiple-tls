@@ -1,5 +1,11 @@
 # vite-plugin-caddy-multiple-tls
 
+## 1.8.0
+
+### Minor Changes
+
+- 0bead09: Export `resolveCaddyTlsDomains()` and `resolveCaddyTlsUrl()` so external tooling can compute the same resolved local HTTPS domains and URL as the plugin.
+
 ## 1.7.1
 
 ### Patch Changes
