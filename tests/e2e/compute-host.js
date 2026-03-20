@@ -42,7 +42,7 @@ function getPlaygroundBaseDomain() {
     "../../playground/base-domain.ts",
   );
   const content = readFileSync(baseDomainPath, "utf8");
-  const match = content.match(/'([^']+)'/);
+  const match = content.match(/['"]([^'"]+)['"]/);
   if (!match) {
     throw new Error("Could not parse playground base domain");
   }
@@ -82,7 +82,7 @@ export function computeHost() {
     if (repoRoot) {
       repo = path.basename(repoRoot);
     }
-  } catch (error) {
+  } catch {
     // Ignore
   }
 
@@ -91,7 +91,7 @@ export function computeHost() {
     if (branch === "HEAD") {
       branch = execGit("git rev-parse --short HEAD");
     }
-  } catch (error) {
+  } catch {
     // Ignore
   }
 

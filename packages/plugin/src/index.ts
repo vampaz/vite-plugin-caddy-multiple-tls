@@ -76,7 +76,7 @@ function getGitRepoInfo(): GitInfo {
     if (repoRoot) {
       info.repo = path.basename(repoRoot);
     }
-  } catch (e) {
+  } catch {
     // Ignore, fall back to explicit config
   }
 
@@ -88,7 +88,7 @@ function getGitRepoInfo(): GitInfo {
     if (branch) {
       info.branch = branch;
     }
-  } catch (e) {
+  } catch {
     // Ignore, fall back to explicit config
   }
 
@@ -188,7 +188,7 @@ function normalizeCaddyAdminOrigin(origin: string) {
   if (!trimmed) return null;
   try {
     return new URL(trimmed).origin;
-  } catch (e) {
+  } catch {
     return null;
   }
 }
@@ -463,7 +463,7 @@ export default function viteCaddyTlsPlugin({
           if (resolvedPort === null && !Number.isNaN(port)) {
             resolvedPort = port;
           }
-        } catch (e) {
+        } catch {
           // Ignore URL parsing errors
         }
       }

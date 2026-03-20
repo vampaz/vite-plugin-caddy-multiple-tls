@@ -5,7 +5,6 @@
 ### Patch Changes
 
 - faaa5b4: Fix a shutdown regression where stopping a Vite server could leave hostname ownership behind and block an immediate restart on the same domain.
-
   - release hostname ownership reliably on `SIGINT` and `SIGTERM`
   - reclaim dead owner records immediately instead of waiting for heartbeat staleness
   - add regression coverage for same-domain restart after terminal shutdown
@@ -15,7 +14,6 @@
 ### Minor Changes
 
 - 5b8fb0f: Improve route isolation so one running Vite server no longer takes over another server's hostname by default.
-
   - add published Vite 8 support in the plugin peer/dev dependency ranges
   - add per-instance ownership records and heartbeat refreshes for managed Caddy routes
   - refuse live hostname conflicts instead of silently replacing another active server
@@ -35,7 +33,6 @@
 ### Minor Changes
 
 - d5bd04d: Harden multi-instance reliability for local HTTPS development.
-
   - use deterministic route IDs and replace stale route/tls entries before adding new ones
   - serialize Caddy bootstrap with a cross-process lock to avoid startup races
   - add `instanceLabel` to derive unique hosts and avoid collisions across projects

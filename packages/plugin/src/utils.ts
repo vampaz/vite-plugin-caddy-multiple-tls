@@ -1,14 +1,14 @@
-import { execSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { mkdir, open, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
+import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdir, open, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
-const DEFAULT_SERVER_NAME = 'srv0';
-export const DEFAULT_CADDY_API_URL = 'http://localhost:2019';
+const DEFAULT_SERVER_NAME = "srv0";
+export const DEFAULT_CADDY_API_URL = "http://localhost:2019";
 export const CADDY_ADMIN_ORIGIN_POLICY_ERROR_MESSAGE =
-  'Caddy Admin API rejected request due to origin policy. Check caddyApiUrl and admin origin settings.';
-const ROUTE_ID_PREFIX = 'vite-proxy-';
+  "Caddy Admin API rejected request due to origin policy. Check caddyApiUrl and admin origin settings.";
+const ROUTE_ID_PREFIX = "vite-proxy-";
 const LOCK_TIMEOUT_MS = 5000;
 const LOCK_RETRY_MS = 50;
 const ROUTE_OWNERSHIP_VERSION = 1;
@@ -16,21 +16,21 @@ export const ROUTE_OWNERSHIP_STALE_AFTER_MS = 30_000;
 export const ROUTE_OWNERSHIP_HEARTBEAT_INTERVAL_MS = 10_000;
 
 const CONNECTIVITY_ERROR_CODES = new Set([
-  'ECONNREFUSED',
-  'ECONNRESET',
-  'EHOSTUNREACH',
-  'ENETUNREACH',
-  'ENOTFOUND',
-  'ETIMEDOUT',
-  'UND_ERR_CONNECT_TIMEOUT',
-  'UND_ERR_HEADERS_TIMEOUT',
-  'UND_ERR_SOCKET',
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENOTFOUND",
+  "ETIMEDOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
 ]);
 
 type CaddyAdminStatus =
-  | { status: 'running' }
-  | { status: 'connectivity-error'; error: Error }
-  | { status: 'api-error'; error: Error };
+  | { status: "running" }
+  | { status: "connectivity-error"; error: Error }
+  | { status: "api-error"; error: Error };
 
 export type RouteOwnershipRecord = {
   version: 1;
@@ -49,32 +49,29 @@ export type RouteOwnershipRecord = {
 
 export type RouteOwnershipClaimResult =
   | {
-      status: 'claimed';
+      status: "claimed";
       currentRecord: RouteOwnershipRecord;
     }
   | {
-      status: 'reclaimed';
+      status: "reclaimed";
       currentRecord: RouteOwnershipRecord;
       previousRecords: RouteOwnershipRecord[];
     }
   | {
-      status: 'active-conflict';
+      status: "active-conflict";
       currentRecord: RouteOwnershipRecord;
       existingRecord: RouteOwnershipRecord;
     };
 
-type RouteOwnershipScope = Pick<
-  RouteOwnershipRecord,
-  'domains' | 'serverName' | 'caddyApiUrl'
->;
+type RouteOwnershipScope = Pick<RouteOwnershipRecord, "domains" | "serverName" | "caddyApiUrl">;
 
 type RouteOwnershipReference = Pick<
   RouteOwnershipRecord,
-  'ownerId' | 'domains' | 'serverName' | 'caddyApiUrl'
+  "ownerId" | "domains" | "serverName" | "caddyApiUrl"
 >;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function normalizeRouteOwnershipDomains(domains: string[]) {
@@ -82,11 +79,11 @@ function normalizeRouteOwnershipDomains(domains: string[]) {
 }
 
 function getRouteOwnershipDirectory() {
-  return path.join(os.tmpdir(), 'vite-plugin-caddy-multiple-tls', 'owners');
+  return path.join(os.tmpdir(), "vite-plugin-caddy-multiple-tls", "owners");
 }
 
 function getRouteOwnershipPaths(scope: RouteOwnershipScope) {
-  const key = createHash('sha1')
+  const key = createHash("sha1")
     .update(
       JSON.stringify({
         domains: normalizeRouteOwnershipDomains(scope.domains),
@@ -94,16 +91,16 @@ function getRouteOwnershipPaths(scope: RouteOwnershipScope) {
         caddyApiUrl: scope.caddyApiUrl,
       }),
     )
-    .digest('hex')
+    .digest("hex")
     .slice(0, 20);
-  const scopeLockKey = createHash('sha1')
+  const scopeLockKey = createHash("sha1")
     .update(
       JSON.stringify({
         serverName: scope.serverName,
         caddyApiUrl: scope.caddyApiUrl,
       }),
     )
-    .digest('hex')
+    .digest("hex")
     .slice(0, 20);
   const directory = getRouteOwnershipDirectory();
 
@@ -117,26 +114,24 @@ function getRouteOwnershipPaths(scope: RouteOwnershipScope) {
 function isRouteOwnershipRecord(value: unknown): value is RouteOwnershipRecord {
   if (!isRecord(value)) return false;
   if (value.version !== ROUTE_OWNERSHIP_VERSION) return false;
-  if (typeof value.ownerId !== 'string' || !value.ownerId) return false;
-  if (typeof value.pid !== 'number' || !Number.isFinite(value.pid)) return false;
-  if (typeof value.cwd !== 'string') return false;
-  if (value.configRoot !== null && typeof value.configRoot !== 'string') return false;
-  if (!Array.isArray(value.domains) || value.domains.some((domain) => typeof domain !== 'string')) {
+  if (typeof value.ownerId !== "string" || !value.ownerId) return false;
+  if (typeof value.pid !== "number" || !Number.isFinite(value.pid)) return false;
+  if (typeof value.cwd !== "string") return false;
+  if (value.configRoot !== null && typeof value.configRoot !== "string") return false;
+  if (!Array.isArray(value.domains) || value.domains.some((domain) => typeof domain !== "string")) {
     return false;
   }
-  if (typeof value.routeId !== 'string' || !value.routeId) return false;
-  if (value.tlsPolicyId !== null && typeof value.tlsPolicyId !== 'string') return false;
-  if (typeof value.serverName !== 'string' || !value.serverName) return false;
-  if (typeof value.caddyApiUrl !== 'string' || !value.caddyApiUrl) return false;
-  if (typeof value.startedAt !== 'number' || !Number.isFinite(value.startedAt)) return false;
-  if (typeof value.lastSeenAt !== 'number' || !Number.isFinite(value.lastSeenAt)) return false;
+  if (typeof value.routeId !== "string" || !value.routeId) return false;
+  if (value.tlsPolicyId !== null && typeof value.tlsPolicyId !== "string") return false;
+  if (typeof value.serverName !== "string" || !value.serverName) return false;
+  if (typeof value.caddyApiUrl !== "string" || !value.caddyApiUrl) return false;
+  if (typeof value.startedAt !== "number" || !Number.isFinite(value.startedAt)) return false;
+  if (typeof value.lastSeenAt !== "number" || !Number.isFinite(value.lastSeenAt)) return false;
 
   return true;
 }
 
-function normalizeRouteOwnershipRecord(
-  record: RouteOwnershipRecord,
-): RouteOwnershipRecord {
+function normalizeRouteOwnershipRecord(record: RouteOwnershipRecord): RouteOwnershipRecord {
   return {
     ...record,
     domains: normalizeRouteOwnershipDomains(record.domains),
@@ -147,13 +142,13 @@ function parseConfig(text: string): unknown | undefined {
   if (!text.trim()) return {};
   try {
     return JSON.parse(text);
-  } catch (e) {
+  } catch {
     return undefined;
   }
 }
 
 function isTlsPolicyOverlapError(text: string) {
-  return text.includes('cannot apply more than one automation policy to host');
+  return text.includes("cannot apply more than one automation policy to host");
 }
 
 function getApiUrl(apiUrl?: string) {
@@ -168,7 +163,7 @@ function toError(error: unknown): Error {
 function isOriginPolicyError(status: number, text: string) {
   if (status !== 403) return false;
   const normalizedText = text.toLowerCase();
-  return normalizedText.includes('origin') && normalizedText.includes('not allowed');
+  return normalizedText.includes("origin") && normalizedText.includes("not allowed");
 }
 
 function buildCaddyRequestError(message: string, status: number, text: string) {
@@ -185,20 +180,20 @@ function buildCaddyRequestError(message: string, status: number, text: string) {
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return Boolean(error) && typeof error === 'object' && 'code' in error;
+  return Boolean(error) && typeof error === "object" && "code" in error;
 }
 
 function getErrorCode(error: unknown): string | undefined {
-  if (!error || typeof error !== 'object') return undefined;
+  if (!error || typeof error !== "object") return undefined;
 
-  if ('code' in error && typeof (error as { code?: unknown }).code === 'string') {
+  if ("code" in error && typeof (error as { code?: unknown }).code === "string") {
     return (error as { code: string }).code;
   }
 
-  if ('cause' in error) {
+  if ("cause" in error) {
     const cause = (error as { cause?: unknown }).cause;
-    if (cause && typeof cause === 'object') {
-      if ('code' in cause && typeof (cause as { code?: unknown }).code === 'string') {
+    if (cause && typeof cause === "object") {
+      if ("code" in cause && typeof (cause as { code?: unknown }).code === "string") {
         return (cause as { code: string }).code;
       }
     }
@@ -216,7 +211,7 @@ function getAdminOrigin(apiUrl?: string, adminOrigin?: string) {
   const originSource = adminOrigin ?? getApiUrl(apiUrl);
   try {
     return new URL(originSource).origin;
-  } catch (e) {
+  } catch {
     return new URL(getApiUrl(apiUrl)).origin;
   }
 }
@@ -228,7 +223,7 @@ async function caddyFetch(
   adminOrigin?: string,
 ) {
   const headers = new Headers(init?.headers);
-  headers.set('Origin', getAdminOrigin(apiUrl, adminOrigin));
+  headers.set("Origin", getAdminOrigin(apiUrl, adminOrigin));
 
   return fetch(input, {
     ...init,
@@ -243,25 +238,25 @@ async function checkCaddyAdminStatus(
   try {
     const res = await caddyFetch(`${getApiUrl(apiUrl)}/config/`, undefined, apiUrl, adminOrigin);
     if (res.ok) {
-      return { status: 'running' };
+      return { status: "running" };
     }
 
     const text = await res.text();
     return {
-      status: 'api-error',
-      error: buildCaddyRequestError('Failed to read Caddy config', res.status, text),
+      status: "api-error",
+      error: buildCaddyRequestError("Failed to read Caddy config", res.status, text),
     };
   } catch (e) {
     const error = toError(e);
     if (isConnectivityError(error)) {
       return {
-        status: 'connectivity-error',
+        status: "connectivity-error",
         error,
       };
     }
 
     return {
-      status: 'api-error',
+      status: "api-error",
       error,
     };
   }
@@ -274,7 +269,7 @@ async function assertCaddyResponse(res: Response, message: string) {
 }
 
 function getLockPath(apiUrl?: string) {
-  const key = createHash('sha1').update(getApiUrl(apiUrl)).digest('hex').slice(0, 12);
+  const key = createHash("sha1").update(getApiUrl(apiUrl)).digest("hex").slice(0, 12);
   return path.join(os.tmpdir(), `vite-plugin-caddy-multiple-tls-${key}.lock`);
 }
 
@@ -288,7 +283,7 @@ async function withFileLock(lockPath: string, fn: () => Promise<void>) {
 
   while (true) {
     try {
-      const handle = await open(lockPath, 'wx');
+      const handle = await open(lockPath, "wx");
       try {
         await fn();
       } finally {
@@ -297,7 +292,7 @@ async function withFileLock(lockPath: string, fn: () => Promise<void>) {
       }
       return;
     } catch (e) {
-      if (!isNodeError(e) || e.code !== 'EEXIST') {
+      if (!isNodeError(e) || e.code !== "EEXIST") {
         throw e;
       }
       if (Date.now() - startedAt >= LOCK_TIMEOUT_MS) {
@@ -316,12 +311,12 @@ async function withApiLock(apiUrl: string | undefined, fn: () => Promise<void>) 
 
 async function readRouteOwnershipByPath(recordPath: string) {
   try {
-    const text = await readFile(recordPath, 'utf8');
+    const text = await readFile(recordPath, "utf8");
     const parsed = parseConfig(text);
     if (!isRouteOwnershipRecord(parsed)) return null;
     return normalizeRouteOwnershipRecord(parsed);
   } catch (e) {
-    if (isNodeError(e) && e.code === 'ENOENT') {
+    if (isNodeError(e) && e.code === "ENOENT") {
       return null;
     }
     throw e;
@@ -336,18 +331,20 @@ async function writeRouteOwnership(record: RouteOwnershipRecord) {
     `${path.basename(recordPath)}.${process.pid}.${Date.now()}.tmp`,
   );
   await mkdir(directory, { recursive: true });
-  await writeFile(tempPath, JSON.stringify(normalizedRecord), 'utf8');
+  await writeFile(tempPath, JSON.stringify(normalizedRecord), "utf8");
   await rename(tempPath, recordPath);
 }
 
-async function listRouteOwnershipRecords(scope: Pick<RouteOwnershipRecord, 'serverName' | 'caddyApiUrl'>) {
+async function listRouteOwnershipRecords(
+  scope: Pick<RouteOwnershipRecord, "serverName" | "caddyApiUrl">,
+) {
   const directory = getRouteOwnershipDirectory();
   let entries: string[];
 
   try {
     entries = await readdir(directory);
   } catch (e) {
-    if (isNodeError(e) && e.code === 'ENOENT') {
+    if (isNodeError(e) && e.code === "ENOENT") {
       return [];
     }
     throw e;
@@ -355,15 +352,13 @@ async function listRouteOwnershipRecords(scope: Pick<RouteOwnershipRecord, 'serv
 
   const records = await Promise.all(
     entries
-      .filter((entry) => entry.endsWith('.json'))
+      .filter((entry) => entry.endsWith(".json"))
       .map((entry) => readRouteOwnershipByPath(path.join(directory, entry))),
   );
 
   return records.filter((record): record is RouteOwnershipRecord => {
     return Boolean(
-      record &&
-        record.serverName === scope.serverName &&
-        record.caddyApiUrl === scope.caddyApiUrl,
+      record && record.serverName === scope.serverName && record.caddyApiUrl === scope.caddyApiUrl,
     );
   });
 }
@@ -373,14 +368,11 @@ function isProcessAlive(pid: number) {
     process.kill(pid, 0);
     return true;
   } catch (e) {
-    return isNodeError(e) && e.code === 'EPERM';
+    return isNodeError(e) && e.code === "EPERM";
   }
 }
 
-export function isRouteOwnershipActive(
-  record: RouteOwnershipRecord,
-  now = Date.now(),
-) {
+export function isRouteOwnershipActive(record: RouteOwnershipRecord, now = Date.now()) {
   if (isProcessAlive(record.pid)) {
     return true;
   }
@@ -405,7 +397,7 @@ export async function claimRouteOwnership(
     if (existingRecord?.ownerId === normalizedRecord.ownerId) {
       await writeRouteOwnership(normalizedRecord);
       claimResult = {
-        status: 'claimed',
+        status: "claimed",
         currentRecord: normalizedRecord,
       };
       return;
@@ -426,7 +418,7 @@ export async function claimRouteOwnership(
 
     if (activeConflict) {
       claimResult = {
-        status: 'active-conflict',
+        status: "active-conflict",
         currentRecord: normalizedRecord,
         existingRecord: activeConflict,
       };
@@ -436,7 +428,7 @@ export async function claimRouteOwnership(
     await writeRouteOwnership(normalizedRecord);
     if (overlappingRecords.length > 0) {
       claimResult = {
-        status: 'reclaimed',
+        status: "reclaimed",
         currentRecord: normalizedRecord,
         previousRecords: overlappingRecords,
       };
@@ -444,13 +436,13 @@ export async function claimRouteOwnership(
     }
 
     claimResult = {
-      status: 'claimed',
+      status: "claimed",
       currentRecord: normalizedRecord,
     };
   });
 
   if (!claimResult) {
-    throw new Error('Failed to claim route ownership.');
+    throw new Error("Failed to claim route ownership.");
   }
 
   return claimResult;
@@ -487,7 +479,7 @@ export async function releaseRouteOwnership(reference: RouteOwnershipReference) 
     }
 
     await unlink(recordPath).catch((error) => {
-      if (!isNodeError(error) || error.code !== 'ENOENT') {
+      if (!isNodeError(error) || error.code !== "ENOENT") {
         throw error;
       }
     });
@@ -506,10 +498,10 @@ export function getRouteOwnershipBaseDirectory() {
  */
 export function validateCaddyIsInstalled() {
   try {
-    execSync('caddy version');
+    execSync("caddy version");
     return true;
-  } catch (e) {
-    console.error('caddy cli is not installed');
+  } catch {
+    console.error("caddy cli is not installed");
     return false;
   }
 }
@@ -519,7 +511,7 @@ export function validateCaddyIsInstalled() {
  */
 export async function isCaddyRunning(apiUrl?: string, adminOrigin?: string): Promise<boolean> {
   const status = await checkCaddyAdminStatus(apiUrl, adminOrigin);
-  return status.status === 'running';
+  return status.status === "running";
 }
 
 /**
@@ -528,16 +520,16 @@ export async function isCaddyRunning(apiUrl?: string, adminOrigin?: string): Pro
 export async function startCaddy(apiUrl?: string, adminOrigin?: string) {
   // console.log("Starting Caddy in the background...");
   try {
-    execSync('caddy start', { stdio: 'ignore' });
-  } catch (e) {
+    execSync("caddy start", { stdio: "ignore" });
+  } catch {
     // Another process may have started Caddy concurrently.
   }
 
   // Wait a bit for it to come up
   for (let i = 0; i < 10; i++) {
     const status = await checkCaddyAdminStatus(apiUrl, adminOrigin);
-    if (status.status === 'running') return true;
-    if (status.status === 'api-error') {
+    if (status.status === "running") return true;
+    if (status.status === "api-error") {
       throw status.error;
     }
 
@@ -564,7 +556,7 @@ export async function ensureBaseConfig(
     const text = await res.text();
     if (isOriginPolicyError(res.status, text)) {
       throw buildCaddyRequestError(
-        'Failed to initialize Caddy base configuration',
+        "Failed to initialize Caddy base configuration",
         res.status,
         text,
       );
@@ -572,7 +564,7 @@ export async function ensureBaseConfig(
   }
 
   const baseConfig = {
-    listen: [':443'],
+    listen: [":443"],
     routes: [],
   };
 
@@ -582,23 +574,18 @@ export async function ensureBaseConfig(
     },
   };
 
-  const configRes = await caddyFetch(
-    `${resolvedApiUrl}/config/`,
-    undefined,
-    apiUrl,
-    adminOrigin,
-  );
-  await assertCaddyResponse(configRes, 'Failed to read Caddy config');
+  const configRes = await caddyFetch(`${resolvedApiUrl}/config/`, undefined, apiUrl, adminOrigin);
+  await assertCaddyResponse(configRes, "Failed to read Caddy config");
 
   const configText = await configRes.text();
   const config = parseConfig(configText);
 
   if (config === undefined) {
-    throw new Error('Failed to parse Caddy config response.');
+    throw new Error("Failed to parse Caddy config response.");
   }
 
   const isEmptyConfig =
-    configText.trim() === '' ||
+    configText.trim() === "" ||
     config === null ||
     (isRecord(config) && Object.keys(config).length === 0);
 
@@ -606,8 +593,8 @@ export async function ensureBaseConfig(
     const loadRes = await caddyFetch(
       `${resolvedApiUrl}/load`,
       {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           apps: {
             http: httpAppConfig,
@@ -621,7 +608,7 @@ export async function ensureBaseConfig(
     if (!loadRes.ok) {
       const text = await loadRes.text();
       throw buildCaddyRequestError(
-        'Failed to initialize Caddy base configuration',
+        "Failed to initialize Caddy base configuration",
         loadRes.status,
         text,
       );
@@ -640,8 +627,8 @@ export async function ensureBaseConfig(
     const createAppsRes = await caddyFetch(
       `${resolvedApiUrl}/config/apps`,
       {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       },
       apiUrl,
@@ -650,7 +637,7 @@ export async function ensureBaseConfig(
     if (!createAppsRes.ok && createAppsRes.status !== 409) {
       const text = await createAppsRes.text();
       throw buildCaddyRequestError(
-        'Failed to initialize Caddy base configuration',
+        "Failed to initialize Caddy base configuration",
         createAppsRes.status,
         text,
       );
@@ -662,8 +649,8 @@ export async function ensureBaseConfig(
     const createHttpRes = await caddyFetch(
       `${resolvedApiUrl}/config/apps/http`,
       {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ servers: {} }),
       },
       apiUrl,
@@ -672,7 +659,7 @@ export async function ensureBaseConfig(
     if (!createHttpRes.ok && createHttpRes.status !== 409) {
       const text = await createHttpRes.text();
       throw buildCaddyRequestError(
-        'Failed to initialize Caddy base configuration',
+        "Failed to initialize Caddy base configuration",
         createHttpRes.status,
         text,
       );
@@ -685,8 +672,8 @@ export async function ensureBaseConfig(
     const createServersRes = await caddyFetch(
       `${resolvedApiUrl}/config/apps/http/servers`,
       {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       },
       apiUrl,
@@ -695,7 +682,7 @@ export async function ensureBaseConfig(
     if (!createServersRes.ok && createServersRes.status !== 409) {
       const text = await createServersRes.text();
       throw buildCaddyRequestError(
-        'Failed to initialize Caddy base configuration',
+        "Failed to initialize Caddy base configuration",
         createServersRes.status,
         text,
       );
@@ -705,8 +692,8 @@ export async function ensureBaseConfig(
   const createServerRes = await caddyFetch(
     serverUrl,
     {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(baseConfig),
     },
     apiUrl,
@@ -716,7 +703,7 @@ export async function ensureBaseConfig(
   if (!createServerRes.ok && createServerRes.status !== 409) {
     const text = await createServerRes.text();
     throw buildCaddyRequestError(
-      'Failed to initialize Caddy base configuration',
+      "Failed to initialize Caddy base configuration",
       createServerRes.status,
       text,
     );
@@ -730,12 +717,9 @@ async function ensureTlsAutomation(apiUrl?: string, adminOrigin?: string) {
   if (policiesRes.ok) return;
 
   const policiesText = await policiesRes.text();
-  if (
-    policiesRes.status !== 404 &&
-    !policiesText.includes('invalid traversal path')
-  ) {
+  if (policiesRes.status !== 404 && !policiesText.includes("invalid traversal path")) {
     throw buildCaddyRequestError(
-      'Failed to initialize Caddy TLS automation',
+      "Failed to initialize Caddy TLS automation",
       policiesRes.status,
       policiesText,
     );
@@ -744,8 +728,8 @@ async function ensureTlsAutomation(apiUrl?: string, adminOrigin?: string) {
   const automationRes = await caddyFetch(
     `${resolvedApiUrl}/config/apps/tls/automation`,
     {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ policies: [] }),
     },
     apiUrl,
@@ -755,9 +739,9 @@ async function ensureTlsAutomation(apiUrl?: string, adminOrigin?: string) {
   if (automationRes.ok || automationRes.status === 409) return;
 
   const automationText = await automationRes.text();
-  if (!automationText.includes('invalid traversal path')) {
+  if (!automationText.includes("invalid traversal path")) {
     throw buildCaddyRequestError(
-      'Failed to initialize Caddy TLS automation',
+      "Failed to initialize Caddy TLS automation",
       automationRes.status,
       automationText,
     );
@@ -766,8 +750,8 @@ async function ensureTlsAutomation(apiUrl?: string, adminOrigin?: string) {
   const tlsRes = await caddyFetch(
     `${resolvedApiUrl}/config/apps/tls`,
     {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ automation: { policies: [] } }),
     },
     apiUrl,
@@ -776,11 +760,7 @@ async function ensureTlsAutomation(apiUrl?: string, adminOrigin?: string) {
 
   if (!tlsRes.ok && tlsRes.status !== 409) {
     const text = await tlsRes.text();
-    throw buildCaddyRequestError(
-      'Failed to initialize Caddy TLS automation',
-      tlsRes.status,
-      text,
-    );
+    throw buildCaddyRequestError("Failed to initialize Caddy TLS automation", tlsRes.status, text);
   }
 }
 
@@ -788,7 +768,7 @@ async function ensureTlsAutomation(apiUrl?: string, adminOrigin?: string) {
  * Adds a route to proxy a specific domain to a local port
  */
 function formatDialAddress(host: string, port: number) {
-  if (host.includes(':') && !host.startsWith('[')) {
+  if (host.includes(":") && !host.startsWith("[")) {
     return `[${host}]:${port}`;
   }
   return `${host}:${port}`;
@@ -803,7 +783,7 @@ function extractMatchedHosts(route: unknown) {
   for (const item of match) {
     if (!isRecord(item) || !Array.isArray(item.host)) continue;
     for (const host of item.host) {
-      if (typeof host === 'string') {
+      if (typeof host === "string") {
         hosts.push(host);
       }
     }
@@ -817,7 +797,7 @@ function extractMatchedSubjects(policy: unknown) {
 
   const subjects: string[] = [];
   for (const subject of policy.subjects) {
-    if (typeof subject === 'string') {
+    if (typeof subject === "string") {
       subjects.push(subject);
     }
   }
@@ -855,8 +835,8 @@ export async function findManagedRoutesForDomains(
 
   for (const route of parsed) {
     if (!isRecord(route)) continue;
-    const id = route['@id'];
-    if (typeof id !== 'string') continue;
+    const id = route["@id"];
+    if (typeof id !== "string") continue;
     if (!id.startsWith(ROUTE_ID_PREFIX)) continue;
 
     const routeDomains = extractMatchedHosts(route);
@@ -891,8 +871,8 @@ export async function findManagedTlsPoliciesForDomains(
 
   for (const policy of parsed) {
     if (!isRecord(policy)) continue;
-    const id = policy['@id'];
-    if (typeof id !== 'string') continue;
+    const id = policy["@id"];
+    if (typeof id !== "string") continue;
     if (!id.startsWith(ROUTE_ID_PREFIX)) continue;
 
     const policyDomains = extractMatchedSubjects(policy);
@@ -910,7 +890,7 @@ export async function addRoute(
   port: number,
   cors?: string,
   serverName = DEFAULT_SERVER_NAME,
-  upstreamHost = '127.0.0.1',
+  upstreamHost = "127.0.0.1",
   upstreamHostHeader?: string,
   apiUrl?: string,
   adminOrigin?: string,
@@ -918,25 +898,18 @@ export async function addRoute(
   const handlers: Array<Record<string, unknown>> = [];
   if (cors) {
     handlers.push({
-      handler: 'headers',
+      handler: "headers",
       response: {
         set: {
-          'Access-Control-Allow-Origin': [cors],
-          'Access-Control-Allow-Methods': [
-            'GET',
-            'POST',
-            'PUT',
-            'PATCH',
-            'DELETE',
-            'OPTIONS',
-          ],
-          'Access-Control-Allow-Headers': ['*'],
+          "Access-Control-Allow-Origin": [cors],
+          "Access-Control-Allow-Methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+          "Access-Control-Allow-Headers": ["*"],
         },
       },
     });
   }
   const reverseProxyHandler: Record<string, unknown> = {
-    handler: 'reverse_proxy',
+    handler: "reverse_proxy",
     upstreams: [{ dial: formatDialAddress(upstreamHost, port) }],
   };
 
@@ -953,11 +926,11 @@ export async function addRoute(
   handlers.push(reverseProxyHandler);
 
   const route = {
-    '@id': id,
+    "@id": id,
     match: [{ host: domains }],
     handle: [
       {
-        handler: 'subroute',
+        handler: "subroute",
         routes: [
           {
             handle: handlers,
@@ -971,8 +944,8 @@ export async function addRoute(
   const res = await caddyFetch(
     `${getApiUrl(apiUrl)}/config/apps/http/servers/${serverName}/routes`,
     {
-      method: 'POST', // Append to routes list
-      headers: { 'Content-Type': 'application/json' },
+      method: "POST", // Append to routes list
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(route),
     },
     apiUrl,
@@ -981,7 +954,7 @@ export async function addRoute(
 
   if (!res.ok) {
     const text = await res.text();
-    throw buildCaddyRequestError('Failed to add route', res.status, text);
+    throw buildCaddyRequestError("Failed to add route", res.status, text);
   }
 }
 
@@ -996,11 +969,11 @@ export async function addTlsPolicy(
 ) {
   await ensureTlsAutomation(apiUrl, adminOrigin);
   const policy = {
-    '@id': id,
+    "@id": id,
     subjects: domains,
     issuers: [
       {
-        module: 'internal',
+        module: "internal",
       },
     ],
   };
@@ -1008,8 +981,8 @@ export async function addTlsPolicy(
   const res = await caddyFetch(
     `${getApiUrl(apiUrl)}/config/apps/tls/automation/policies`,
     {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(policy),
     },
     apiUrl,
@@ -1021,7 +994,7 @@ export async function addTlsPolicy(
     if (isTlsPolicyOverlapError(text)) {
       return;
     }
-    throw buildCaddyRequestError('Failed to add TLS policy', res.status, text);
+    throw buildCaddyRequestError("Failed to add TLS policy", res.status, text);
   }
 }
 
@@ -1032,7 +1005,7 @@ export async function removeRoute(id: string, apiUrl?: string, adminOrigin?: str
   const res = await caddyFetch(
     `${getApiUrl(apiUrl)}/id/${id}`,
     {
-      method: 'DELETE',
+      method: "DELETE",
     },
     apiUrl,
     adminOrigin,
@@ -1055,7 +1028,7 @@ export async function removeTlsPolicy(id: string, apiUrl?: string, adminOrigin?:
   const res = await caddyFetch(
     `${getApiUrl(apiUrl)}/id/${id}`,
     {
-      method: 'DELETE',
+      method: "DELETE",
     },
     apiUrl,
     adminOrigin,
@@ -1063,11 +1036,7 @@ export async function removeTlsPolicy(id: string, apiUrl?: string, adminOrigin?:
 
   if (!res.ok && res.status !== 404) {
     const text = await res.text();
-    const error = buildCaddyRequestError(
-      `Failed to remove TLS policy ${id}`,
-      res.status,
-      text,
-    );
+    const error = buildCaddyRequestError(`Failed to remove TLS policy ${id}`, res.status, text);
     console.error(error.message);
     return false;
   }
@@ -1082,17 +1051,17 @@ export async function ensureCaddyReady(
   await withApiLock(apiUrl, async () => {
     const status = await checkCaddyAdminStatus(apiUrl, adminOrigin);
 
-    if (status.status === 'api-error') {
+    if (status.status === "api-error") {
       throw status.error;
     }
 
-    let running = status.status === 'running';
-    if (status.status === 'connectivity-error') {
+    let running = status.status === "running";
+    if (status.status === "connectivity-error") {
       running = await startCaddy(apiUrl, adminOrigin);
     }
 
     if (!running) {
-      throw new Error('Failed to start Caddy server.');
+      throw new Error("Failed to start Caddy server.");
     }
 
     await ensureBaseConfig(serverName, apiUrl, adminOrigin);

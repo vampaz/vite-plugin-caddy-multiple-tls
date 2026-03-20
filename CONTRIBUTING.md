@@ -2,11 +2,11 @@
 
 This should walk your through how to setup the repo to get developing on a cool new feature.
 
-### prerequisites  
+### prerequisites
+
 1. npm
 1. node >= 22
 1. [caddy](https://caddyserver.com/)
-
 
 ### setup
 

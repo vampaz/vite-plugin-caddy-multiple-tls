@@ -1,3 +1,3 @@
-const playgroundBaseDomain = 'mine.localhost';
+const playgroundBaseDomain = "mine.localhost";
 
 export { playgroundBaseDomain };
