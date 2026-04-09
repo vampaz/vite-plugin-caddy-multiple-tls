@@ -78,6 +78,26 @@ function normalizeRouteOwnershipDomains(domains: string[]) {
   return Array.from(new Set(domains)).sort();
 }
 
+function haveSameDomains(left: string[], right: string[]) {
+  if (left.length !== right.length) return false;
+
+  return left.every((domain, index) => domain === right[index]);
+}
+
+function getRouteOwnershipProjectRoot(record: Pick<RouteOwnershipRecord, "configRoot" | "cwd">) {
+  return record.configRoot ?? record.cwd;
+}
+
+function canReclaimLiveOwnership(
+  currentRecord: RouteOwnershipRecord,
+  existingRecord: RouteOwnershipRecord,
+) {
+  return (
+    getRouteOwnershipProjectRoot(currentRecord) === getRouteOwnershipProjectRoot(existingRecord) &&
+    haveSameDomains(currentRecord.domains, existingRecord.domains)
+  );
+}
+
 function getRouteOwnershipDirectory() {
   return path.join(os.tmpdir(), "vite-plugin-caddy-multiple-tls", "owners");
 }
@@ -412,8 +432,18 @@ export async function claimRouteOwnership(
       },
     );
 
+    const reclaimableRecords = overlappingRecords.filter((candidate) => {
+      if (!isRouteOwnershipActive(candidate)) {
+        return true;
+      }
+
+      return canReclaimLiveOwnership(normalizedRecord, candidate);
+    });
+
     const activeConflict = overlappingRecords.find((candidate) => {
-      return isRouteOwnershipActive(candidate);
+      return (
+        isRouteOwnershipActive(candidate) && !canReclaimLiveOwnership(normalizedRecord, candidate)
+      );
     });
 
     if (activeConflict) {
@@ -426,11 +456,11 @@ export async function claimRouteOwnership(
     }
 
     await writeRouteOwnership(normalizedRecord);
-    if (overlappingRecords.length > 0) {
+    if (reclaimableRecords.length > 0) {
       claimResult = {
         status: "reclaimed",
         currentRecord: normalizedRecord,
-        previousRecords: overlappingRecords,
+        previousRecords: reclaimableRecords,
       };
       return;
     }
