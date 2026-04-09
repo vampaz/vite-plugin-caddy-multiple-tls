@@ -1,5 +1,11 @@
 # vite-plugin-caddy-multiple-tls
 
+## 1.8.1
+
+### Patch Changes
+
+- 89e1dc7: Allow a new server for the same project and resolved domain set to replace an existing live ownership claim instead of refusing startup.
+
 ## 1.8.0
 
 ### Minor Changes
