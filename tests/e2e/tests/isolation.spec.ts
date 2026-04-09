@@ -103,18 +103,21 @@ async function stopCompetingServer(
   await Promise.race([once(child, "exit"), wait(1_500)]);
 }
 
-test("refuses to steal a live hostname from another dev server", async ({ page }) => {
+test("allows a newer dev server from the same project to replace the live hostname", async ({
+  page,
+}) => {
   await page.goto("/");
   await page.waitForSelector("h1");
   await expect(page.locator("#location")).toContainText("https://");
   await expect(
     page.getByRole("heading", { name: "Vite Plugin Caddy with multiple TLS" }),
   ).toBeVisible();
+  const expectedOrigin = new URL(page.url()).origin;
 
   const competingServer = startCompetingServer();
 
   try {
-    await expect.poll(() => competingServer.getOutput()).toContain("already owns this domain");
+    await waitForServerOutput(competingServer.getOutput, expectedOrigin);
   } finally {
     await stopCompetingServer(competingServer.child);
   }

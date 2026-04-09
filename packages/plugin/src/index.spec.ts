@@ -464,6 +464,57 @@ describe("viteCaddyTlsPlugin", () => {
 
     firstPlugin.configureServer({
       httpServer: firstServer,
+      config: { server: { port: 5173 }, root: "/tmp/app-one" },
+    });
+    secondPlugin.configureServer({
+      httpServer: secondServer,
+      config: { server: { port: 5174 }, root: "/tmp/app-two" },
+    });
+
+    firstServer.listening = true;
+    secondServer.listening = true;
+    firstServer.emit("listening");
+    secondServer.emit("listening");
+    await flushPromises();
+    await flushPromises();
+
+    expect(vi.mocked(addRoute)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(addRoute).mock.calls[0][0]).toEqual(expect.stringContaining("vite-proxy-"));
+    expect(vi.mocked(removeRoute)).not.toHaveBeenCalled();
+  });
+
+  it("replaces the existing domain when the new server is for the same project", async () => {
+    const firstServer = createHttpServer(4009);
+    const secondServer = createHttpServer(4010);
+    const firstPlugin = viteCaddyTlsPlugin({
+      domain: "stable.localhost",
+      internalTls: true,
+    }) as any;
+    const secondPlugin = viteCaddyTlsPlugin({
+      domain: "stable.localhost",
+      internalTls: true,
+    }) as any;
+    vi.mocked(claimRouteOwnership)
+      .mockImplementationOnce(async (record) => ({
+        status: "claimed",
+        currentRecord: record,
+      }))
+      .mockImplementationOnce(async (record) => ({
+        status: "reclaimed",
+        currentRecord: record,
+        previousRecords: [
+          createClaimedRecord({
+            ownerId: "owner-1",
+            domains: ["stable.localhost"],
+            routeId: "vite-proxy-owner-1",
+            tlsPolicyId: "vite-proxy-owner-1-tls",
+            configRoot: "/tmp/app",
+          }),
+        ],
+      }));
+
+    firstPlugin.configureServer({
+      httpServer: firstServer,
       config: { server: { port: 5173 }, root: "/tmp/app" },
     });
     secondPlugin.configureServer({
@@ -478,9 +529,19 @@ describe("viteCaddyTlsPlugin", () => {
     await flushPromises();
     await flushPromises();
 
-    expect(vi.mocked(addRoute)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(addRoute).mock.calls[0][0]).toEqual(expect.stringContaining("vite-proxy-"));
-    expect(vi.mocked(removeRoute)).not.toHaveBeenCalled();
+    expect(removeTlsPolicy).toHaveBeenCalledWith(
+      "vite-proxy-owner-1-tls",
+      "http://localhost:2019",
+      "http://localhost:2019",
+    );
+    expect(removeRoute).toHaveBeenCalledWith(
+      "vite-proxy-owner-1",
+      "http://localhost:2019",
+      "http://localhost:2019",
+    );
+    expect(vi.mocked(addRoute)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(addRoute).mock.calls[1][1]).toEqual(["stable.localhost"]);
+    expect(vi.mocked(addRoute).mock.calls[1][2]).toBe(4010);
   });
 
   it("reclaims stale ownership before adding the new route", async () => {

@@ -172,6 +172,7 @@ describe("route ownership", () => {
     const firstRecord = createOwnershipRecord();
     const secondRecord = createOwnershipRecord({
       ownerId: "owner-2",
+      configRoot: "/tmp/other-app",
       routeId: "vite-proxy-owner-2",
     });
 
@@ -182,6 +183,29 @@ describe("route ownership", () => {
       currentRecord: secondRecord,
       existingRecord: firstRecord,
     });
+  });
+
+  it("reclaims a live owner from the same project when the domains match exactly", async () => {
+    const firstRecord = createOwnershipRecord();
+    const secondRecord = createOwnershipRecord({
+      ownerId: "owner-2",
+      routeId: "vite-proxy-owner-2",
+    });
+
+    await claimRouteOwnership(firstRecord);
+
+    await expect(claimRouteOwnership(secondRecord)).resolves.toEqual({
+      status: "reclaimed",
+      currentRecord: secondRecord,
+      previousRecords: [firstRecord],
+    });
+    await expect(
+      readRouteOwnership({
+        domains: secondRecord.domains,
+        serverName: secondRecord.serverName,
+        caddyApiUrl: secondRecord.caddyApiUrl,
+      }),
+    ).resolves.toEqual(secondRecord);
   });
 
   it("refuses a live conflicting owner with overlapping domains", async () => {
@@ -220,6 +244,7 @@ describe("route ownership", () => {
     });
     const secondRecord = createOwnershipRecord({
       ownerId: "owner-2",
+      configRoot: "/tmp/other-app",
       routeId: "vite-proxy-owner-2",
     });
 
