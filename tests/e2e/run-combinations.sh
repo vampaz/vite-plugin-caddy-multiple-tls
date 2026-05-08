@@ -13,13 +13,13 @@ run_tests() {
   # Dev Mode
   echo "------------------------------------------------"
   echo "👉 [Dev] $desc"
-  eval "$env_vars npx playwright test"
+  eval "$env_vars npm exec -- playwright test"
 
   # Preview Mode
   echo "------------------------------------------------"
   echo "👉 [Preview] $desc"
   # Pass E2E_PREVIEW=1 explicitly to ensure consistency
-  eval "E2E_PREVIEW=1 $env_vars npx playwright test --config playwright.preview.config.ts"
+  eval "E2E_PREVIEW=1 $env_vars npm exec -- playwright test --config playwright.preview.config.ts"
 }
 
 # 1. Default (mine.localhost)
@@ -27,7 +27,7 @@ run_tests() {
 # Covered by baseDomain=localhost test.
 echo "------------------------------------------------"
 echo "👉 [Dev] Default (mine.localhost)"
-npx playwright test
+npm exec -- playwright test
 
 # 2. Localhost base domain
 run_tests "baseDomain=localhost" "E2E_BASE_DOMAIN=localhost"
@@ -44,11 +44,11 @@ run_tests "loopbackDomain=nip.io" "E2E_LOOPBACK_DOMAIN=nip.io"
 # 6. Explicit domain
 echo "------------------------------------------------"
 echo "👉 [Dev] Explicit domain"
-E2E_DOMAIN=explicit.localtest.me npx playwright test
+E2E_DOMAIN=explicit.localtest.me npm exec -- playwright test
 
 echo "------------------------------------------------"
 echo "👉 [Preview] Explicit domain"
-E2E_DOMAIN=explicit-preview.localtest.me npx playwright test --config playwright.preview.config.ts
+E2E_DOMAIN=explicit-preview.localtest.me npm exec -- playwright test --config playwright.preview.config.ts
 
 echo "------------------------------------------------"
 echo "✅ All combinations passed!"

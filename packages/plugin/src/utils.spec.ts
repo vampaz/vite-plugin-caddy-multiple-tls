@@ -6,6 +6,9 @@ import {
   addTlsPolicy,
   CADDY_ADMIN_ORIGIN_POLICY_ERROR_MESSAGE,
   claimRouteOwnership,
+  commitManagedResourcePreservation,
+  createManagedResourcePreservation,
+  discardManagedResourcePreservation,
   ensureBaseConfig,
   ensureCaddyReady,
   findManagedRoutesForDomains,
@@ -168,7 +171,7 @@ describe("route ownership", () => {
     ).resolves.toEqual(record);
   });
 
-  it("refuses a live conflicting owner", async () => {
+  it("replaces a live conflicting owner", async () => {
     const firstRecord = createOwnershipRecord();
     const secondRecord = createOwnershipRecord({
       ownerId: "owner-2",
@@ -179,13 +182,13 @@ describe("route ownership", () => {
     await claimRouteOwnership(firstRecord);
 
     await expect(claimRouteOwnership(secondRecord)).resolves.toEqual({
-      status: "active-conflict",
+      status: "replaced",
       currentRecord: secondRecord,
-      existingRecord: firstRecord,
+      previousRecords: [firstRecord],
     });
   });
 
-  it("reclaims a live owner from the same project when the domains match exactly", async () => {
+  it("replaces a live owner from the same project when the domains match exactly", async () => {
     const firstRecord = createOwnershipRecord();
     const secondRecord = createOwnershipRecord({
       ownerId: "owner-2",
@@ -195,7 +198,7 @@ describe("route ownership", () => {
     await claimRouteOwnership(firstRecord);
 
     await expect(claimRouteOwnership(secondRecord)).resolves.toEqual({
-      status: "reclaimed",
+      status: "replaced",
       currentRecord: secondRecord,
       previousRecords: [firstRecord],
     });
@@ -208,7 +211,7 @@ describe("route ownership", () => {
     ).resolves.toEqual(secondRecord);
   });
 
-  it("refuses a live conflicting owner with overlapping domains", async () => {
+  it("replaces a live conflicting owner with overlapping domains", async () => {
     const firstRecord = createOwnershipRecord({
       domains: ["app.localhost", "app-2.localhost"],
     });
@@ -221,16 +224,13 @@ describe("route ownership", () => {
     await claimRouteOwnership(firstRecord);
 
     await expect(claimRouteOwnership(secondRecord)).resolves.toEqual({
-      status: "active-conflict",
+      status: "replaced",
       currentRecord: secondRecord,
-      existingRecord: {
-        ...firstRecord,
-        domains: ["app-2.localhost", "app.localhost"],
-      },
+      previousRecords: [{ ...firstRecord, domains: ["app-2.localhost", "app.localhost"] }],
     });
   });
 
-  it("keeps a live pid active even when the heartbeat is stale", async () => {
+  it("replaces a live pid even when the heartbeat is stale", async () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
       if (signal === 0 && pid === 42_424) {
         return true;
@@ -251,15 +251,16 @@ describe("route ownership", () => {
     await claimRouteOwnership(firstRecord);
 
     await expect(claimRouteOwnership(secondRecord)).resolves.toEqual({
-      status: "active-conflict",
+      status: "replaced",
       currentRecord: secondRecord,
-      existingRecord: firstRecord,
+      previousRecords: [firstRecord],
     });
+    expect(killSpy).not.toHaveBeenCalled();
 
     killSpy.mockRestore();
   });
 
-  it("reclaims a stale owner record", async () => {
+  it("replaces a stale owner record", async () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
       throw createNodeError("ESRCH");
     });
@@ -277,15 +278,16 @@ describe("route ownership", () => {
     await claimRouteOwnership(staleRecord);
 
     await expect(claimRouteOwnership(nextRecord)).resolves.toEqual({
-      status: "reclaimed",
+      status: "replaced",
       currentRecord: nextRecord,
       previousRecords: [staleRecord],
     });
+    expect(killSpy).not.toHaveBeenCalled();
 
     killSpy.mockRestore();
   });
 
-  it("reclaims a dead owner immediately even when the heartbeat is still fresh", async () => {
+  it("replaces a dead owner immediately even when the heartbeat is still fresh", async () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
       throw createNodeError("ESRCH");
     });
@@ -303,15 +305,16 @@ describe("route ownership", () => {
     await claimRouteOwnership(staleRecord);
 
     await expect(claimRouteOwnership(nextRecord)).resolves.toEqual({
-      status: "reclaimed",
+      status: "replaced",
       currentRecord: nextRecord,
       previousRecords: [staleRecord],
     });
+    expect(killSpy).not.toHaveBeenCalled();
 
     killSpy.mockRestore();
   });
 
-  it("reclaims a stale overlapping owner record", async () => {
+  it("replaces a stale overlapping owner record", async () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
       throw createNodeError("ESRCH");
     });
@@ -331,7 +334,7 @@ describe("route ownership", () => {
     await claimRouteOwnership(staleRecord);
 
     await expect(claimRouteOwnership(nextRecord)).resolves.toEqual({
-      status: "reclaimed",
+      status: "replaced",
       currentRecord: nextRecord,
       previousRecords: [
         {
@@ -340,6 +343,7 @@ describe("route ownership", () => {
         },
       ],
     });
+    expect(killSpy).not.toHaveBeenCalled();
 
     killSpy.mockRestore();
   });
@@ -448,6 +452,153 @@ describe("findManagedTlsPoliciesForDomains", () => {
       "vite-proxy-owner-1-tls",
     ]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("managed resource preservation", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    execSyncMock.mockReset();
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("clones a combined route and TLS policy for remaining sibling domains", async () => {
+    const record = createOwnershipRecord({
+      ownerId: "combined-owner",
+      domains: ["app.localhost", "api.localhost"],
+      routeId: "vite-proxy-combined-owner",
+      tlsPolicyId: "vite-proxy-combined-owner-tls",
+    });
+    const routeConfig = {
+      "@id": "vite-proxy-combined-owner",
+      match: [{ host: ["app.localhost", "api.localhost"] }],
+      handle: [
+        {
+          handler: "subroute",
+          routes: [
+            {
+              handle: [
+                {
+                  handler: "reverse_proxy",
+                  upstreams: [{ dial: "127.0.0.1:5173" }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      terminal: true,
+    };
+    const tlsPolicy = {
+      "@id": "vite-proxy-combined-owner-tls",
+      subjects: ["app.localhost", "api.localhost"],
+      issuers: [{ module: "internal" }],
+    };
+
+    fetchMock
+      .mockResolvedValueOnce(createResponse({ ok: true, text: JSON.stringify(routeConfig) }))
+      .mockResolvedValueOnce(createResponse({ ok: true, text: JSON.stringify(tlsPolicy) }))
+      .mockResolvedValueOnce(createResponse({ ok: true }))
+      .mockResolvedValueOnce(createResponse({ ok: true }));
+
+    const preservation = await createManagedResourcePreservation(record, ["api.localhost"], "srv0");
+
+    expect(preservation).toBeTruthy();
+    expect(preservation?.record.domains).toEqual(["api.localhost"]);
+    expect(preservation?.record.routeId).toMatch(/^vite-proxy-preserved-/);
+    expect(preservation?.record.tlsPolicyId).toBe(`${preservation?.record.routeId}-tls`);
+    expect(fetchMock.mock.calls[0][0]).toBe("http://localhost:2019/id/vite-proxy-combined-owner");
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "http://localhost:2019/id/vite-proxy-combined-owner-tls",
+    );
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      "http://localhost:2019/config/apps/http/servers/srv0/routes",
+    );
+
+    const preservedRoute = JSON.parse((fetchMock.mock.calls[2][1] as RequestInit).body as string);
+    expect(preservedRoute["@id"]).toBe(preservation?.record.routeId);
+    expect(preservedRoute.match).toEqual([{ host: ["api.localhost"] }]);
+    expect(preservedRoute.handle).toEqual(routeConfig.handle);
+
+    await commitManagedResourcePreservation(preservation!);
+
+    expect(fetchMock.mock.calls[3][0]).toBe(
+      "http://localhost:2019/config/apps/tls/automation/policies",
+    );
+    const preservedTlsPolicy = JSON.parse(
+      (fetchMock.mock.calls[3][1] as RequestInit).body as string,
+    );
+    expect(preservedTlsPolicy["@id"]).toBe(preservation?.record.tlsPolicyId);
+    expect(preservedTlsPolicy.subjects).toEqual(["api.localhost"]);
+    await expect(
+      readRouteOwnership({
+        domains: ["api.localhost"],
+        serverName: record.serverName,
+        caddyApiUrl: record.caddyApiUrl,
+      }),
+    ).resolves.toEqual(preservation?.record);
+  });
+
+  it("discards a preserved route and TLS policy when replacement cannot finish", async () => {
+    const preservation = {
+      record: createOwnershipRecord({
+        ownerId: "combined-owner-preserved",
+        domains: ["api.localhost"],
+        routeId: "vite-proxy-preserved-api",
+        tlsPolicyId: "vite-proxy-preserved-api-tls",
+      }),
+      tlsPolicy: null,
+    };
+    fetchMock.mockResolvedValue(createResponse({ ok: true }));
+
+    await expect(discardManagedResourcePreservation(preservation)).resolves.toBe(true);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0]).toBe("http://localhost:2019/id/vite-proxy-preserved-api");
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: "DELETE" });
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "http://localhost:2019/id/vite-proxy-preserved-api-tls",
+    );
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({ method: "DELETE" });
+  });
+
+  it("creates a default TLS policy when the old combined TLS policy is missing", async () => {
+    const record = createOwnershipRecord({
+      domains: ["app.localhost", "api.localhost"],
+      routeId: "vite-proxy-combined-owner",
+      tlsPolicyId: "vite-proxy-combined-owner-tls",
+    });
+    fetchMock
+      .mockResolvedValueOnce(
+        createResponse({
+          ok: true,
+          text: JSON.stringify({
+            "@id": "vite-proxy-combined-owner",
+            match: [{ host: ["app.localhost", "api.localhost"] }],
+            handle: [],
+            terminal: true,
+          }),
+        }),
+      )
+      .mockResolvedValueOnce(createResponse({ ok: false, status: 404 }))
+      .mockResolvedValueOnce(createResponse({ ok: true }))
+      .mockResolvedValueOnce(createResponse({ ok: true }));
+
+    const preservation = await createManagedResourcePreservation(record, ["api.localhost"], "srv0");
+    await commitManagedResourcePreservation(preservation!);
+
+    const preservedTlsPolicy = JSON.parse(
+      (fetchMock.mock.calls[3][1] as RequestInit).body as string,
+    );
+    expect(preservedTlsPolicy.subjects).toEqual(["api.localhost"]);
+    expect(preservedTlsPolicy.issuers).toEqual([{ module: "internal" }]);
   });
 });
 

@@ -12,7 +12,7 @@ Instead of spawning a process per instance, this plugin adopts a **Client-Server
 
 1.  **Server**: A single, shared background Caddy instance listens on port 443.
 2.  **Client**: Each Vite plugin instance acts as an API client, dynamically injecting and removing routing rules via Caddy's [Admin API](https://caddyserver.com/docs/api).
-3.  **Ownership Registry**: Each Vite instance also claims a temp-file ownership record for its resolved domains so one live server cannot silently replace another.
+3.  **Ownership Registry**: Each Vite instance claims temp-file ownership records for its resolved hostnames so the latest-started server deterministically owns each hostname.
 
 ## Architecture Diagram
 
@@ -65,13 +65,13 @@ Before adding specific routes, the plugin ensures the "Base Config" exists. It c
 
 ### 4. Dynamic Route Injection
 
-Before adding a route, the plugin claims ownership of the resolved domains.
+Before adding routes, the plugin claims ownership of each resolved domain independently.
 
 - **If no owner exists**: it claims the domains and continues.
-- **If a live owner exists**: it fails fast and tells the user to stop the other server or choose a unique hostname.
-- **If the owner is stale**: it reclaims ownership, removes the stale route and TLS policy, then continues.
+- **If another owner exists**: it replaces that hostname's ownership, removes the previous route and TLS policy, then continues.
+- **If an owner is stale**: it follows the same replacement path and cleans up the stale Caddy resources.
 
-After ownership is established, the plugin generates a unique `routeId` for that running instance and constructs a specific Caddy JSON route object:
+After ownership is established, the plugin generates a unique `routeId` for each hostname and constructs a specific Caddy JSON route object:
 
 ```json
 {
@@ -96,7 +96,9 @@ After ownership is established, the plugin generates a unique `routeId` for that
 }
 ```
 
-This JSON is `POST`ed to the Caddy API (`/config/apps/http/servers/srv0/routes`). This allows Caddy to reload its configuration instantly without dropping connections.
+This JSON is `POST`ed to the Caddy API (`/config/apps/http/servers/srv0/routes`). Before each POST, older plugin-managed routes for that hostname are removed. Caddy route and TLS mutations are serialized with a shared local API lock so concurrent Vite starts cannot overwrite each other's Caddy updates. This allows Caddy to reload its configuration instantly without dropping connections, and lets a multi-domain plugin instance lose one reused hostname without losing its sibling hostnames.
+
+When replacing one hostname from an older combined multi-domain route, the plugin first clones that managed route and TLS policy for the remaining sibling hostnames, then removes the old combined resources. The preserved sibling route gets its own ownership record so future starts can still replace it deterministically.
 
 ### 5. TLS Automation (when `domain` or `baseDomain` is set)
 

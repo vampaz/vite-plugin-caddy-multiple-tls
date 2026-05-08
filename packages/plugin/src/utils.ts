@@ -53,15 +53,15 @@ export type RouteOwnershipClaimResult =
       currentRecord: RouteOwnershipRecord;
     }
   | {
-      status: "reclaimed";
+      status: "replaced";
       currentRecord: RouteOwnershipRecord;
       previousRecords: RouteOwnershipRecord[];
-    }
-  | {
-      status: "active-conflict";
-      currentRecord: RouteOwnershipRecord;
-      existingRecord: RouteOwnershipRecord;
     };
+
+export type ManagedResourcePreservation = {
+  record: RouteOwnershipRecord;
+  tlsPolicy: Record<string, unknown> | null;
+};
 
 type RouteOwnershipScope = Pick<RouteOwnershipRecord, "domains" | "serverName" | "caddyApiUrl">;
 
@@ -76,26 +76,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizeRouteOwnershipDomains(domains: string[]) {
   return Array.from(new Set(domains)).sort();
-}
-
-function haveSameDomains(left: string[], right: string[]) {
-  if (left.length !== right.length) return false;
-
-  return left.every((domain, index) => domain === right[index]);
-}
-
-function getRouteOwnershipProjectRoot(record: Pick<RouteOwnershipRecord, "configRoot" | "cwd">) {
-  return record.configRoot ?? record.cwd;
-}
-
-function canReclaimLiveOwnership(
-  currentRecord: RouteOwnershipRecord,
-  existingRecord: RouteOwnershipRecord,
-) {
-  return (
-    getRouteOwnershipProjectRoot(currentRecord) === getRouteOwnershipProjectRoot(existingRecord) &&
-    haveSameDomains(currentRecord.domains, existingRecord.domains)
-  );
 }
 
 function getRouteOwnershipDirectory() {
@@ -325,8 +305,16 @@ async function withFileLock(lockPath: string, fn: () => Promise<void>) {
   }
 }
 
-async function withApiLock(apiUrl: string | undefined, fn: () => Promise<void>) {
-  await withFileLock(getLockPath(apiUrl), fn);
+async function withApiLock<T>(apiUrl: string | undefined, fn: () => Promise<T>) {
+  let result: T;
+  await withFileLock(getLockPath(apiUrl), async () => {
+    result = await fn();
+  });
+  return result!;
+}
+
+export async function withCaddyApiLock<T>(apiUrl: string | undefined, fn: () => Promise<T>) {
+  return withApiLock(apiUrl, fn);
 }
 
 async function readRouteOwnershipByPath(recordPath: string) {
@@ -432,35 +420,12 @@ export async function claimRouteOwnership(
       },
     );
 
-    const reclaimableRecords = overlappingRecords.filter((candidate) => {
-      if (!isRouteOwnershipActive(candidate)) {
-        return true;
-      }
-
-      return canReclaimLiveOwnership(normalizedRecord, candidate);
-    });
-
-    const activeConflict = overlappingRecords.find((candidate) => {
-      return (
-        isRouteOwnershipActive(candidate) && !canReclaimLiveOwnership(normalizedRecord, candidate)
-      );
-    });
-
-    if (activeConflict) {
-      claimResult = {
-        status: "active-conflict",
-        currentRecord: normalizedRecord,
-        existingRecord: activeConflict,
-      };
-      return;
-    }
-
     await writeRouteOwnership(normalizedRecord);
-    if (reclaimableRecords.length > 0) {
+    if (overlappingRecords.length > 0) {
       claimResult = {
-        status: "reclaimed",
+        status: "replaced",
         currentRecord: normalizedRecord,
-        previousRecords: reclaimableRecords,
+        previousRecords: overlappingRecords,
       };
       return;
     }
@@ -839,6 +804,158 @@ function intersectsDomains(targetDomains: string[], routeDomains: string[]) {
   if (targetDomains.length === 0 || routeDomains.length === 0) return false;
   const targetSet = new Set(targetDomains);
   return routeDomains.some((domain) => targetSet.has(domain));
+}
+
+async function readManagedConfigById(id: string, apiUrl?: string, adminOrigin?: string) {
+  const res = await caddyFetch(`${getApiUrl(apiUrl)}/id/${id}`, undefined, apiUrl, adminOrigin);
+  if (res.status === 404) return null;
+  await assertCaddyResponse(res, `Failed to read managed Caddy resource ${id}`);
+
+  const text = await res.text();
+  const parsed = parseConfig(text);
+  return isRecord(parsed) ? parsed : null;
+}
+
+function createPreservedOwnershipRecord(
+  record: RouteOwnershipRecord,
+  domains: string[],
+): RouteOwnershipRecord {
+  const normalizedDomains = normalizeRouteOwnershipDomains(domains);
+  const hash = createHash("sha1")
+    .update(`${record.routeId}:${normalizedDomains.join(",")}:${process.pid}:${Date.now()}`)
+    .digest("hex")
+    .slice(0, 12);
+  const ownerId = `${record.ownerId}-preserved-${hash}`;
+  const routeId = `${ROUTE_ID_PREFIX}preserved-${hash}`;
+  const now = Date.now();
+
+  return {
+    ...record,
+    ownerId,
+    domains: normalizedDomains,
+    routeId,
+    tlsPolicyId: record.tlsPolicyId ? `${routeId}-tls` : null,
+    startedAt: now,
+    lastSeenAt: now,
+  };
+}
+
+async function postManagedRouteConfig(
+  route: Record<string, unknown>,
+  serverName = DEFAULT_SERVER_NAME,
+  apiUrl?: string,
+  adminOrigin?: string,
+) {
+  const res = await caddyFetch(
+    `${getApiUrl(apiUrl)}/config/apps/http/servers/${serverName}/routes`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(route),
+    },
+    apiUrl,
+    adminOrigin,
+  );
+  await assertCaddyResponse(res, "Failed to preserve managed Caddy route");
+}
+
+async function postManagedTlsPolicyConfig(
+  policy: Record<string, unknown>,
+  apiUrl?: string,
+  adminOrigin?: string,
+) {
+  const res = await caddyFetch(
+    `${getApiUrl(apiUrl)}/config/apps/tls/automation/policies`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(policy),
+    },
+    apiUrl,
+    adminOrigin,
+  );
+
+  if (!res.ok) {
+    const text = await res.text();
+    if (isTlsPolicyOverlapError(text)) {
+      return;
+    }
+    throw buildCaddyRequestError("Failed to preserve managed Caddy TLS policy", res.status, text);
+  }
+}
+
+export async function createManagedResourcePreservation(
+  record: RouteOwnershipRecord,
+  domains: string[],
+  serverName = DEFAULT_SERVER_NAME,
+  apiUrl?: string,
+  adminOrigin?: string,
+): Promise<ManagedResourcePreservation | null> {
+  const remainingDomains = normalizeRouteOwnershipDomains(
+    domains.filter((domain) => record.domains.includes(domain)),
+  );
+  if (remainingDomains.length === 0) return null;
+
+  const routeConfig = await readManagedConfigById(record.routeId, apiUrl, adminOrigin);
+  if (!routeConfig) return null;
+
+  const preservedRecord = createPreservedOwnershipRecord(record, remainingDomains);
+  const preservedRoute = {
+    ...routeConfig,
+    "@id": preservedRecord.routeId,
+    match: [{ host: preservedRecord.domains }],
+  };
+
+  const sourceTlsPolicy =
+    record.tlsPolicyId && preservedRecord.tlsPolicyId
+      ? await readManagedConfigById(record.tlsPolicyId, apiUrl, adminOrigin)
+      : null;
+  const preservedTlsPolicy = preservedRecord.tlsPolicyId
+    ? {
+        ...(sourceTlsPolicy ?? {
+          issuers: [
+            {
+              module: "internal",
+            },
+          ],
+        }),
+        "@id": preservedRecord.tlsPolicyId,
+        subjects: preservedRecord.domains,
+      }
+    : null;
+
+  await postManagedRouteConfig(preservedRoute, serverName, apiUrl, adminOrigin);
+
+  return {
+    record: preservedRecord,
+    tlsPolicy: preservedTlsPolicy,
+  };
+}
+
+export async function commitManagedResourcePreservation(
+  preservation: ManagedResourcePreservation,
+  apiUrl?: string,
+  adminOrigin?: string,
+) {
+  if (preservation.tlsPolicy) {
+    await postManagedTlsPolicyConfig(preservation.tlsPolicy, apiUrl, adminOrigin);
+  }
+
+  await writeRouteOwnership(preservation.record);
+}
+
+export async function discardManagedResourcePreservation(
+  preservation: ManagedResourcePreservation,
+  apiUrl?: string,
+  adminOrigin?: string,
+) {
+  let discarded = await removeRoute(preservation.record.routeId, apiUrl, adminOrigin);
+  if (preservation.record.tlsPolicyId) {
+    discarded =
+      (await removeTlsPolicy(preservation.record.tlsPolicyId, apiUrl, adminOrigin)) && discarded;
+  }
+
+  return discarded;
 }
 
 export async function findManagedRoutesForDomains(

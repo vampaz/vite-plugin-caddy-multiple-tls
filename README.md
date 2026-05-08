@@ -130,7 +130,11 @@ export default config;
 
 This derives a host like `<repo>.<branch>.web-1.localhost`.
 
-The plugin now treats hostname ownership as explicit. If another live Vite server already owns the resolved domain, it will refuse takeover instead of deleting the other server's route. Use `instanceLabel`, `domain`, or stop the other server first.
+The plugin treats hostname ownership as latest-started-wins. If another live Vite server already owns a resolved hostname, the newly started server replaces that hostname's Caddy route so the domain points at the server you just started.
+
+When a plugin instance has multiple domains, each hostname is managed independently. Reusing `app.localhost` from another server will not remove a sibling route like `api.localhost`.
+
+If the plugin replaces one hostname from an older combined multi-domain route, it preserves the remaining sibling hostnames before removing the old combined route.
 
 If a previous Vite process crashed and left stale ownership behind, the plugin will reclaim it automatically and clean up the stale Caddy route before continuing.
 
@@ -179,12 +183,11 @@ export default config;
 
 ## Troubleshooting
 
-### `Cannot claim ... another Vite server already owns this domain`
+### A hostname points to the newest matching server
 
-This means another live dev server is already using the resolved hostname.
+If two dev servers resolve to the same hostname, the most recently started server owns that hostname.
 
-- Stop the other server if you want this one to use the same host.
-- Add `instanceLabel` if both servers should run at the same time.
+- Add `instanceLabel` if both servers should stay reachable at the same time.
 - Pass an explicit `domain` if you want total control over the hostname.
 
 ### `client is not allowed to access from origin ''`

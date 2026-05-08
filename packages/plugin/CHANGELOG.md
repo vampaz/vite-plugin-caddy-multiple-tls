@@ -1,5 +1,16 @@
 # vite-plugin-caddy-multiple-tls
 
+## 1.9.0
+
+### Minor Changes
+
+- Make hostname routing latest-started-wins so starting a Vite server for a domain always points that domain at the newest server.
+  - manage multi-domain plugin instances per hostname so replacing `app.localhost` does not remove sibling domains like `api.localhost`
+  - serialize Caddy route and TLS mutations across concurrent Vite starts so simultaneous servers do not lose routes
+  - preserve sibling hostnames when replacing one hostname from an older combined multi-domain route
+  - add unit and e2e coverage for reused live hostnames and several simultaneous Vite servers on distinct domains
+  - update release documentation for the new deterministic ownership behavior
+
 ## 1.8.1
 
 ### Patch Changes
