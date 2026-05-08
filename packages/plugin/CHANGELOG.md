@@ -1,5 +1,11 @@
 # vite-plugin-caddy-multiple-tls
 
+## 1.9.0
+
+### Minor Changes
+
+- Make hostname routing latest-wins so starting a Vite server for an already-managed domain updates Caddy to point that hostname at the newest server. Multi-domain plugin instances now manage each hostname independently, so reusing one hostname does not remove sibling hostnames from the previous server.
+
 ## 1.8.0
 
 ### Minor Changes

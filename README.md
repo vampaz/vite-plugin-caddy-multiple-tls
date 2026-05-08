@@ -130,9 +130,11 @@ export default config;
 
 This derives a host like `<repo>.<branch>.web-1.localhost`.
 
-The plugin now treats hostname ownership as explicit. If another live Vite server already owns the resolved domain, it will refuse takeover instead of deleting the other server's route. Use `instanceLabel`, `domain`, or stop the other server first.
+The plugin treats hostname ownership as latest-wins. If another live Vite server already owns the resolved domain, the newly started server replaces the managed Caddy route so that hostname points to the server you just started. The previous server keeps running, but its hostname ownership is released.
 
-If a previous Vite process crashed and left stale ownership behind, the plugin will reclaim it automatically and clean up the stale Caddy route before continuing.
+When a plugin instance manages multiple domains, each hostname is owned independently. Reusing `app.localhost` does not disturb a sibling hostname like `api.localhost`.
+
+If a previous Vite process crashed and left stale ownership behind, the plugin will replace it automatically and clean up the stale Caddy route before continuing.
 
 For a zero-config experience, use `baseDomain: 'localhost'` (the default) so the derived domain works without editing `/etc/hosts`.
 
@@ -179,13 +181,12 @@ export default config;
 
 ## Troubleshooting
 
-### `Cannot claim ... another Vite server already owns this domain`
+### A hostname points to the newest matching server
 
-This means another live dev server is already using the resolved hostname.
+If two dev servers use the same resolved hostname, the most recently started server owns that hostname.
 
-- Stop the other server if you want this one to use the same host.
-- Add `instanceLabel` if both servers should run at the same time.
-- Pass an explicit `domain` if you want total control over the hostname.
+- Add `instanceLabel` if both servers should be reachable at the same time.
+- Pass an explicit `domain` if you want total control over each hostname.
 
 ### `client is not allowed to access from origin ''`
 

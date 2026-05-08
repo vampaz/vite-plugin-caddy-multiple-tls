@@ -168,7 +168,7 @@ describe("route ownership", () => {
     ).resolves.toEqual(record);
   });
 
-  it("refuses a live conflicting owner", async () => {
+  it("replaces a live conflicting owner", async () => {
     const firstRecord = createOwnershipRecord();
     const secondRecord = createOwnershipRecord({
       ownerId: "owner-2",
@@ -178,13 +178,13 @@ describe("route ownership", () => {
     await claimRouteOwnership(firstRecord);
 
     await expect(claimRouteOwnership(secondRecord)).resolves.toEqual({
-      status: "active-conflict",
+      status: "replaced",
       currentRecord: secondRecord,
-      existingRecord: firstRecord,
+      previousRecords: [firstRecord],
     });
   });
 
-  it("refuses a live conflicting owner with overlapping domains", async () => {
+  it("replaces a live conflicting owner with overlapping domains", async () => {
     const firstRecord = createOwnershipRecord({
       domains: ["app.localhost", "app-2.localhost"],
     });
@@ -197,16 +197,18 @@ describe("route ownership", () => {
     await claimRouteOwnership(firstRecord);
 
     await expect(claimRouteOwnership(secondRecord)).resolves.toEqual({
-      status: "active-conflict",
+      status: "replaced",
       currentRecord: secondRecord,
-      existingRecord: {
-        ...firstRecord,
-        domains: ["app-2.localhost", "app.localhost"],
-      },
+      previousRecords: [
+        {
+          ...firstRecord,
+          domains: ["app-2.localhost", "app.localhost"],
+        },
+      ],
     });
   });
 
-  it("keeps a live pid active even when the heartbeat is stale", async () => {
+  it("replaces a live owner even when the pid is still active", async () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
       if (signal === 0 && pid === 42_424) {
         return true;
@@ -226,15 +228,16 @@ describe("route ownership", () => {
     await claimRouteOwnership(firstRecord);
 
     await expect(claimRouteOwnership(secondRecord)).resolves.toEqual({
-      status: "active-conflict",
+      status: "replaced",
       currentRecord: secondRecord,
-      existingRecord: firstRecord,
+      previousRecords: [firstRecord],
     });
+    expect(killSpy).not.toHaveBeenCalled();
 
     killSpy.mockRestore();
   });
 
-  it("reclaims a stale owner record", async () => {
+  it("replaces a stale owner record", async () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
       throw createNodeError("ESRCH");
     });
@@ -252,7 +255,7 @@ describe("route ownership", () => {
     await claimRouteOwnership(staleRecord);
 
     await expect(claimRouteOwnership(nextRecord)).resolves.toEqual({
-      status: "reclaimed",
+      status: "replaced",
       currentRecord: nextRecord,
       previousRecords: [staleRecord],
     });
@@ -260,7 +263,7 @@ describe("route ownership", () => {
     killSpy.mockRestore();
   });
 
-  it("reclaims a dead owner immediately even when the heartbeat is still fresh", async () => {
+  it("replaces a dead owner immediately even when the heartbeat is still fresh", async () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
       throw createNodeError("ESRCH");
     });
@@ -278,7 +281,7 @@ describe("route ownership", () => {
     await claimRouteOwnership(staleRecord);
 
     await expect(claimRouteOwnership(nextRecord)).resolves.toEqual({
-      status: "reclaimed",
+      status: "replaced",
       currentRecord: nextRecord,
       previousRecords: [staleRecord],
     });
@@ -286,7 +289,7 @@ describe("route ownership", () => {
     killSpy.mockRestore();
   });
 
-  it("reclaims a stale overlapping owner record", async () => {
+  it("replaces a stale overlapping owner record", async () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
       throw createNodeError("ESRCH");
     });
@@ -306,7 +309,7 @@ describe("route ownership", () => {
     await claimRouteOwnership(staleRecord);
 
     await expect(claimRouteOwnership(nextRecord)).resolves.toEqual({
-      status: "reclaimed",
+      status: "replaced",
       currentRecord: nextRecord,
       previousRecords: [
         {

@@ -53,14 +53,9 @@ export type RouteOwnershipClaimResult =
       currentRecord: RouteOwnershipRecord;
     }
   | {
-      status: "reclaimed";
+      status: "replaced";
       currentRecord: RouteOwnershipRecord;
       previousRecords: RouteOwnershipRecord[];
-    }
-  | {
-      status: "active-conflict";
-      currentRecord: RouteOwnershipRecord;
-      existingRecord: RouteOwnershipRecord;
     };
 
 type RouteOwnershipScope = Pick<RouteOwnershipRecord, "domains" | "serverName" | "caddyApiUrl">;
@@ -412,23 +407,10 @@ export async function claimRouteOwnership(
       },
     );
 
-    const activeConflict = overlappingRecords.find((candidate) => {
-      return isRouteOwnershipActive(candidate);
-    });
-
-    if (activeConflict) {
-      claimResult = {
-        status: "active-conflict",
-        currentRecord: normalizedRecord,
-        existingRecord: activeConflict,
-      };
-      return;
-    }
-
     await writeRouteOwnership(normalizedRecord);
     if (overlappingRecords.length > 0) {
       claimResult = {
-        status: "reclaimed",
+        status: "replaced",
         currentRecord: normalizedRecord,
         previousRecords: overlappingRecords,
       };
